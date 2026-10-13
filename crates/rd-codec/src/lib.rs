@@ -47,6 +47,10 @@ pub enum CodecError {
     Other(#[from] anyhow::Error),
 }
 
+pub mod openh264;
+
+pub use openh264::{OpenH264Decoder, OpenH264Encoder};
+
 #[allow(async_fn_in_trait)]
 pub trait Encoder: Send {
     fn config(&self) -> &EncoderConfig;

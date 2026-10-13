@@ -159,6 +159,26 @@ pub fn all() -> Vec<Theme> {
     ]
 }
 
+/// Cool neutral palette adapted to the supplied settings-page reference.
+pub fn mist() -> Theme {
+    let mut theme = by_name("Paper");
+    theme.name = "Mist";
+    theme.bg_top = c(0xfa, 0xfa, 0xfb);
+    theme.bg_bottom = c(0xe2, 0xe3, 0xe5);
+    theme.surface = c(0xff, 0xff, 0xff);
+    theme.surface_hi = c(0xed, 0xee, 0xf0);
+    theme.stroke = c(0xdd, 0xde, 0xe1);
+    theme.text = c(0x1c, 0x1d, 0x20);
+    theme.text_dim = c(0x6d, 0x6e, 0x73);
+    theme.text_faint = c(0x94, 0x95, 0x9b);
+    theme.accent = c(0x65, 0x67, 0x6e);
+    theme.accent2 = c(0x85, 0x87, 0x8e);
+    theme.ok = c(0x58, 0xa4, 0x80);
+    theme.warn = c(0xd8, 0xa4, 0x44);
+    theme.neutral = c(0xb9, 0xba, 0xbf);
+    theme
+}
+
 pub fn by_name(name: &str) -> Theme {
     let v = all();
     v.iter()
@@ -273,6 +293,9 @@ impl Theme {
     /// halfway between the window background and the card colour, so cards
     /// drawn on it still stand out.
     pub fn inset_bg(&self) -> Color32 {
+        if self.name == "Mist" {
+            return c(0xf7, 0xf7, 0xf8);
+        }
         let bg = lerp_color(self.bg_top, self.bg_bottom, 0.5);
         lerp_color(bg, self.surface, if self.dark { 0.45 } else { 0.6 })
     }
@@ -281,6 +304,9 @@ impl Theme {
     /// darker than [`Theme::inset_bg`] on every theme, so the sheet has the
     /// same visible edge on all four sides.
     pub fn shell_bg(&self) -> Color32 {
+        if self.name == "Mist" {
+            return self.bg_bottom;
+        }
         if self.dark {
             lerp_color(self.bg_bottom, Color32::BLACK, 0.12)
         } else {

@@ -1,5 +1,45 @@
 //! macOS window chrome helpers.
 
+/// AppKit owns the inserted view; install once after the native window exists.
+pub fn install_vibrancy(frame: &eframe::Frame) -> bool {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSAutoresizingMaskOptions, NSColor, NSView, NSVisualEffectBlendingMode,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
+    };
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let Ok(handle) = frame.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else {
+        return false;
+    };
+    // SAFETY: the eframe window handle is valid and this runs on the main thread.
+    let view: &NSView = unsafe { h.ns_view.cast::<NSView>().as_ref() };
+    let Some(window) = view.window() else {
+        return false;
+    };
+    // SAFETY: the live window retains this view hierarchy; accessed on main thread.
+    let Some(parent) = (unsafe { view.superview() }) else {
+        return false;
+    };
+    let effect = NSVisualEffectView::new(mtm);
+    effect.setFrame(view.frame());
+    effect.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    effect.setMaterial(NSVisualEffectMaterial::Sidebar);
+    effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    effect.setState(NSVisualEffectState::Active);
+    parent.addSubview_positioned_relativeTo(&effect, NSWindowOrderingMode::Below, Some(view));
+    window.setOpaque(false);
+    window.setBackgroundColor(Some(&NSColor::clearColor()));
+    true
+}
+
 /// (Vertical centre from the top, right edge, left edge) of the traffic-light
 /// buttons, read from AppKit so the custom top bar lines up on every macOS
 /// version.

@@ -43,6 +43,10 @@ pub struct CapturedFrame {
     pub timestamp_us: u64,
 }
 
+pub mod synthetic;
+
+pub use synthetic::SyntheticCapturer;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
     #[error("capture backend unavailable: {0}")]

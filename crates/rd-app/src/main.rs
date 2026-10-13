@@ -1,12 +1,16 @@
 //! RDX placeholder dashboard adapted from SquirrelDisk / DCX (AGPL-3.0-only).
+mod assistance;
 mod cards;
 #[cfg(target_os = "macos")]
 mod macos;
+mod settings;
 mod theme;
 mod widgets;
 use eframe::egui::{self, Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Vec2};
 use theme::{with_alpha, Theme};
 use widgets::{bold, cr, display, font, BtnStyle, Icon};
+
+pub(crate) const PAGE_PADDING_X: f32 = 48.0;
 
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
@@ -14,6 +18,7 @@ fn main() -> eframe::Result<()> {
         .with_min_inner_size([860.0, 560.0]);
     #[cfg(target_os = "macos")]
     let viewport = viewport
+        .with_transparent(true)
         .with_fullsize_content_view(true)
         .with_titlebar_shown(false)
         .with_title_shown(false);
@@ -28,9 +33,16 @@ fn main() -> eframe::Result<()> {
             install_fonts(&cc.egui_ctx);
             cc.egui_ctx.set_visuals(egui::Visuals::light());
             Ok(Box::new(App {
-                theme: theme::by_name("Paper"),
+                theme: theme::mist(),
                 sidebar: true,
                 scroll: 0.0,
+                vibrancy: false,
+                page: Page::Tools,
+                assistance: assistance::Assistance::default(),
+                settings: settings::Settings::default(),
+                device_page: 0,
+                devices_per_page: 5,
+                device_filter: 0,
             }))
         }),
     )
@@ -77,18 +89,39 @@ fn install_fonts(ctx: &egui::Context) {
     }
     ctx.set_fonts(fonts);
 }
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Tools,
+    Devices,
+    Assistance,
+    Settings,
+}
+
 struct App {
     theme: Theme,
     sidebar: bool,
     scroll: f32,
+    vibrancy: bool,
+    page: Page,
+    assistance: assistance::Assistance,
+    settings: settings::Settings,
+    device_page: usize,
+    devices_per_page: usize,
+    device_filter: usize,
 }
 impl eframe::App for App {
+    fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         #[allow(unused_mut)]
         let mut chrome_right = 68.0;
         #[cfg(target_os = "macos")]
         {
+            if !self.vibrancy {
+                self.vibrancy = macos::install_vibrancy(frame);
+            }
             if let Some((cy, _, left)) = macos::traffic_lights(frame) {
                 let (dx, dy) = ((27.0 - left) as f64, (24.0 - cy) as f64);
                 if dx.abs() > 0.5 || dy.abs() > 0.5 {
@@ -101,7 +134,22 @@ impl eframe::App for App {
         }
         let _ = frame;
         let screen = ctx.content_rect();
-        ui.painter().rect_filled(screen, 0.0, self.theme.shell_bg());
+        let tint = if self.vibrancy {
+            with_alpha(self.theme.shell_bg(), 0.20)
+        } else {
+            self.theme.shell_bg()
+        };
+        ui.painter().rect_filled(screen, 0.0, tint);
+        if self.theme.name == "Mist" {
+            let chrome =
+                Rect::from_min_max(screen.min, Pos2::new(screen.right(), screen.top() + 96.0));
+            widgets::vgradient(
+                ui.painter(),
+                chrome,
+                with_alpha(self.theme.bg_top, if self.vibrancy { 0.65 } else { 1.0 }),
+                with_alpha(self.theme.bg_bottom, if self.vibrancy { 0.0 } else { 1.0 }),
+            );
+        }
         let drag = ui.interact(
             Rect::from_min_size(screen.min, Vec2::new(screen.width(), 72.0)),
             Id::new("window-drag"),
@@ -120,7 +168,10 @@ impl eframe::App for App {
                 screen.min,
                 Pos2::new(screen.left() + width, screen.bottom()),
             );
-            draw_sidebar(ui, side, &self.theme);
+            if let Some(page) = draw_sidebar(ui, side, &self.theme, self.page) {
+                self.page = page;
+                self.scroll = 0.0;
+            }
         }
         let content = Rect::from_min_max(
             Pos2::new(screen.left() + width + 8.0, screen.top() + 8.0),
@@ -157,27 +208,45 @@ impl eframe::App for App {
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
             ui.set_clip_rect(content);
-            self.dashboard(ui, content);
+            match self.page {
+                Page::Tools => self.tools_page(ui, content),
+                Page::Devices => self.devices_page(ui, content),
+                Page::Assistance => self.assistance.show(ui, content, &self.theme, self.sidebar),
+                Page::Settings => self
+                    .settings
+                    .show(ui, content, &self.theme, &mut self.sidebar),
+            }
         });
     }
 }
-fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme) {
+fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> Option<Page> {
     let item = Rect::from_min_size(
         side.min + Vec2::new(12.0, 58.0),
         Vec2::new(side.width() - 16.0, 36.0),
     );
-    nav_item(
-        ui,
-        item,
-        Id::new("nav-dash"),
-        Icon::Grid,
-        "仪表板",
-        true,
-        false,
-        None,
-        theme,
-    );
-    let y = item.bottom() + 54.0;
+    let mut selected = None;
+    for (index, page, icon, label) in [
+        (0, Page::Assistance, Icon::Panel, "远程协助"),
+        (1, Page::Devices, Icon::Server, "设备"),
+        (2, Page::Tools, Icon::Grid, "工具"),
+    ] {
+        if nav_item(
+            ui,
+            item.translate(Vec2::new(0.0, index as f32 * 40.0)),
+            Id::new(("page", index)),
+            icon,
+            label,
+            current == page,
+            false,
+            None,
+            theme,
+        )
+        .0
+        {
+            selected = Some(page);
+        }
+    }
+    let y = item.bottom() + 134.0;
     ui.painter().text(
         Pos2::new(side.left() + 24.0, y),
         Align2::LEFT_TOP,
@@ -185,18 +254,22 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme) {
         bold(12.5),
         with_alpha(Color32::BLACK, 0.55),
     );
-    nav_item(
+    if nav_item(
         ui,
         Rect::from_min_size(Pos2::new(side.left() + 12.0, y + 22.0), item.size()),
         Id::new("nav-device"),
         Icon::Disk,
         "RDX 本机",
         false,
-        true,
+        false,
         None,
         theme,
-    );
-    nav_item(
+    )
+    .0
+    {
+        selected = Some(Page::Devices);
+    }
+    if nav_item(
         ui,
         Rect::from_min_size(
             Pos2::new(side.left() + 12.0, side.bottom() - 44.0),
@@ -205,73 +278,41 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme) {
         Id::new("nav-settings"),
         Icon::Gear,
         "设置",
-        false,
+        current == Page::Settings,
         false,
         None,
         theme,
-    );
+    )
+    .0
+    {
+        selected = Some(Page::Settings);
+    }
+    selected
 }
+
 impl App {
-    fn dashboard(&mut self, ui: &mut egui::Ui, content: Rect) {
+    fn devices_page(&mut self, ui: &mut egui::Ui, content: Rect) {
         let t = &self.theme;
         let header = if self.sidebar { 22.0 } else { 48.0 };
-        let content_h = header + 52.0 + 122.0 + 334.0 + 16.0 + 118.0 + 64.0 + 44.0;
-        let max_scroll = (content_h - content.height()).max(0.0);
-        if ui.rect_contains_pointer(content) {
-            self.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-        }
-        self.scroll = self.scroll.clamp(0.0, max_scroll);
-        let (x, w) = (content.left() + 24.0, content.width() - 48.0);
-        let mut y = content.top() - self.scroll + header;
+        let (x, w) = (
+            content.left() + PAGE_PADDING_X,
+            content.width() - PAGE_PADDING_X * 2.0,
+        );
+        let top = content.top() + header;
         ui.painter().text(
-            Pos2::new(x, y),
+            Pos2::new(x, top),
             Align2::LEFT_TOP,
-            "仪表板",
+            "设备",
             display(22.0),
             t.text,
         );
-        widgets::icon_button(
-            ui,
-            Rect::from_center_size(Pos2::new(x + w - 16.0, y + 16.0), Vec2::splat(32.0)),
-            Id::new("settings"),
-            Icon::Gear,
-            t,
-            true,
-        );
-        y += 52.0;
-        let tw = (w - 42.0) / 4.0;
-        for (k, (label, value, sub, icon, accent)) in [
-            ("设备", "5", "已登记设备", Icon::Disk, t.accent),
-            ("在线会话", "空闲", "暂无进行中的会话", Icon::Bolt, t.warn),
-            ("已授权", "3", "可远程访问", Icon::Grid, t.accent2),
-            ("可用通道", "2", "等待连接请求", Icon::Check, t.ok),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            cards::dash_tile(
-                ui,
-                Rect::from_min_size(
-                    Pos2::new(x + k as f32 * (tw + 14.0), y),
-                    Vec2::new(tw, 108.0),
-                ),
-                label,
-                value,
-                sub,
-                icon,
-                accent,
-                t,
-            );
-        }
-        y += 122.0;
-        let card = Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, 334.0));
-        cards::card_bg(ui, card, t);
+        let y = top + 44.0;
         ui.painter().text(
-            card.min + Vec2::new(18.0, 22.0),
+            Pos2::new(x, y + 14.0),
             Align2::LEFT_CENTER,
-            "设备",
-            bold(12.5),
-            t.text_dim,
+            "已登记设备",
+            bold(18.0),
+            t.text,
         );
         let devices = [
             ("RDX 本机", "RDX-298 417 652 · 本机", 0.74, "在线"),
@@ -280,64 +321,275 @@ impl App {
             ("测试设备 A", "RDX-119 705 824 · 占位", 0.78, "等待"),
             ("测试设备 B", "RDX-908 446 130 · 占位", 0.34, "可用"),
         ];
-        for (k, data) in devices.into_iter().enumerate() {
-            device_row(
-                ui,
-                Rect::from_min_size(
-                    card.min + Vec2::new(10.0, 40.0 + k as f32 * 56.0),
-                    Vec2::new(w - 20.0, 54.0),
-                ),
-                k,
-                data,
-                t,
-            );
-        }
-        y += 350.0;
-        let cw = (w - 28.0) / 3.0;
-        for (k, (icon, title, sub)) in [
-            (Icon::Folder, "本机桌面", "此 Mac 当前的共享桌面"),
-            (Icon::Server, "远程设备", "通过伙伴 ID 建立会话"),
-            (Icon::Cloud, "Web 控制台", "浏览器控制端（规划中）"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            cards::source_card(
-                ui,
-                Rect::from_min_size(
-                    Pos2::new(x + k as f32 * (cw + 14.0), y),
-                    Vec2::new(cw, 104.0),
-                ),
-                Id::new(("source", k)),
-                icon,
-                title,
-                sub,
-                t,
-            );
-        }
-        y += 118.0;
-        promo(
+        widgets::icon_button(
             ui,
-            Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, 52.0)),
+            Rect::from_center_size(Pos2::new(x + w - 94.0, y + 14.0), Vec2::splat(28.0)),
+            Id::new("refresh-devices"),
+            Icon::Refresh,
+            t,
+            true,
+        )
+        .on_hover_text("刷新设备列表");
+        let previous_filter = self.device_filter;
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                Pos2::new(x + w - 72.0, y + 2.0),
+                Vec2::new(72.0, 26.0),
+            )),
+            |ui| {
+                let label = if self.device_filter == 0 {
+                    "筛选 ▾"
+                } else {
+                    "筛选 • ▾"
+                };
+                ui.menu_button(label, |ui| {
+                    for (value, label) in [
+                        (0, "全部设备"),
+                        (1, "本机"),
+                        (2, "受信任设备"),
+                        (3, "占位设备"),
+                    ] {
+                        if ui
+                            .selectable_value(&mut self.device_filter, value, label)
+                            .clicked()
+                        {
+                            ui.close();
+                        }
+                    }
+                });
+            },
+        );
+        if previous_filter != self.device_filter {
+            self.device_page = 0;
+        }
+        let filtered: Vec<_> = devices
+            .into_iter()
+            .enumerate()
+            .filter(|(_, device)| match self.device_filter {
+                1 => device.1.ends_with("本机"),
+                2 => device.1.ends_with("受信任"),
+                3 => device.1.ends_with("占位"),
+                _ => true,
+            })
+            .collect();
+        let total = filtered.len();
+        let pager_top = content.bottom() - 68.0;
+        let pager = Rect::from_min_size(Pos2::new(x, pager_top), Vec2::new(w, 52.0));
+        ui.painter().line_segment(
+            [pager.left_top(), pager.right_top()],
+            Stroke::new(1.0, with_alpha(t.stroke, 0.65)),
+        );
+        let controls_top = pager.top() + 20.0;
+        let center_y = controls_top + 14.0;
+        ui.painter().text(
+            Pos2::new(x, center_y),
+            Align2::LEFT_CENTER,
+            "每页",
+            font(12.0),
+            t.text_dim,
+        );
+        let previous_size = self.devices_per_page;
+        let sizes: Vec<_> = [3, 5, 10, 20]
+            .into_iter()
+            .map(|n| (n, format!("{n} 条")))
+            .collect();
+        pagination_select(
+            ui,
+            Rect::from_min_size(Pos2::new(x + 34.0, controls_top), Vec2::new(72.0, 28.0)),
+            Id::new("devices-per-page"),
+            &mut self.devices_per_page,
+            format!("{} 条", previous_size),
+            &sizes,
             t,
         );
-        y += 64.0;
-        ui.painter().text(
-            Pos2::new(
-                content.center().x,
-                (y + 20.0).max(content.bottom() - 26.0 - self.scroll),
-            ),
-            Align2::CENTER_CENTER,
-            "v0.1.0 · 选择设备以开始远程会话 · Esc 返回",
-            font(11.5),
-            t.text_faint,
+        if previous_size != self.devices_per_page {
+            self.device_page = 0;
+        }
+        let pages = total.div_ceil(self.devices_per_page).max(1);
+        self.device_page = self.device_page.min(pages - 1);
+        let nav_x = pager.center().x - 120.0;
+        let prev = Rect::from_min_size(Pos2::new(nav_x, controls_top), Vec2::new(68.0, 28.0));
+        if widgets::button_ex(
+            ui,
+            prev,
+            Id::new("device-prev"),
+            "上一页",
+            None,
+            BtnStyle::Subtle,
+            t,
+            self.device_page > 0,
+        )
+        .clicked()
+        {
+            self.device_page -= 1;
+        }
+        let options: Vec<_> = (0..pages)
+            .map(|page| (page, format!("第 {} 页", page + 1)))
+            .collect();
+        let selected = format!("{} / {} 页", self.device_page + 1, pages);
+        pagination_select(
+            ui,
+            Rect::from_min_size(Pos2::new(nav_x + 76.0, controls_top), Vec2::new(88.0, 28.0)),
+            Id::new("device-page-number"),
+            &mut self.device_page,
+            selected,
+            &options,
+            t,
         );
+        let next = Rect::from_min_size(
+            Pos2::new(nav_x + 172.0, controls_top),
+            Vec2::new(68.0, 28.0),
+        );
+        if widgets::button_ex(
+            ui,
+            next,
+            Id::new("device-next"),
+            "下一页",
+            None,
+            BtnStyle::Subtle,
+            t,
+            self.device_page + 1 < pages,
+        )
+        .clicked()
+        {
+            self.device_page += 1;
+        }
+        let range_start = self.device_page * self.devices_per_page;
+        let range_end = (range_start + self.devices_per_page).min(total);
+        ui.painter().text(
+            Pos2::new(pager.right(), center_y),
+            Align2::RIGHT_CENTER,
+            format!(
+                "{}–{} / {} 台",
+                if total == 0 { 0 } else { range_start + 1 },
+                range_end,
+                total
+            ),
+            font(12.0),
+            t.text_dim,
+        );
+        let start = self.device_page * self.devices_per_page;
+        let end = (start + self.devices_per_page).min(total);
+        let list = Rect::from_min_max(Pos2::new(x, y + 30.0), Pos2::new(x + w, pager_top - 8.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("devices-scroll", self.device_page, self.devices_per_page))
+                .max_height(list.height())
+                .show(ui, |ui| {
+                    for (position, &(k, data)) in filtered.iter().enumerate().take(end).skip(start)
+                    {
+                        let (row, _) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), 60.0),
+                            Sense::hover(),
+                        );
+                        device_row(ui, row, k, data, t);
+                        if position + 1 < end {
+                            ui.painter().line_segment(
+                                [row.left_bottom(), row.right_bottom()],
+                                Stroke::new(1.0, with_alpha(t.stroke, 0.65)),
+                            );
+                        }
+                    }
+                });
+        });
+    }
+    fn tools_page(&mut self, ui: &mut egui::Ui, content: Rect) {
+        let t = &self.theme;
+        let header = if self.sidebar { 22.0 } else { 48.0 };
+        let banner_top = content.bottom() - 16.0 - 52.0;
+        let scroll_area =
+            Rect::from_min_max(content.min, Pos2::new(content.right(), banner_top - 16.0));
+        let original_clip = ui.clip_rect();
+        ui.set_clip_rect(original_clip.intersect(scroll_area));
+        let content_h = header + 44.0 + 2.0 * (28.0 + 84.0);
+        let max_scroll = (content_h - scroll_area.height()).max(0.0);
+        if ui.rect_contains_pointer(scroll_area) {
+            self.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
+        }
+        self.scroll = self.scroll.clamp(0.0, max_scroll);
+        let (x, w) = (
+            content.left() + PAGE_PADDING_X,
+            content.width() - PAGE_PADDING_X * 2.0,
+        );
+        let mut y = content.top() - self.scroll + header;
+        ui.painter().text(
+            Pos2::new(x, y),
+            Align2::LEFT_TOP,
+            "工具",
+            display(22.0),
+            t.text,
+        );
+        if widgets::icon_button(
+            ui,
+            Rect::from_center_size(Pos2::new(x + w - 16.0, y + 16.0), Vec2::splat(32.0)),
+            Id::new("settings"),
+            Icon::Gear,
+            t,
+            true,
+        )
+        .clicked()
+        {
+            self.page = Page::Settings;
+            self.scroll = 0.0;
+            ui.set_clip_rect(original_clip);
+            return;
+        }
+        y += 44.0;
+        let cw = (w - 12.0) / 2.0;
+        let groups: [(&str, &[(Icon, &str, &str)]); 2] = [
+            (
+                "本机工具",
+                &[(Icon::Folder, "本机桌面", "此 Mac 当前的共享桌面")],
+            ),
+            (
+                "远程访问",
+                &[
+                    (Icon::Server, "远程设备", "查看设备并建立远程会话"),
+                    (Icon::Cloud, "Web 控制台", "浏览器控制端（规划中）"),
+                ],
+            ),
+        ];
+        let mut open_devices = false;
+        for (group_index, (label, tools)) in groups.into_iter().enumerate() {
+            ui.painter().text(
+                Pos2::new(x, y + 12.0),
+                Align2::LEFT_CENTER,
+                label,
+                bold(16.0),
+                t.text,
+            );
+            y += 28.0;
+            for (index, &(icon, title, subtitle)) in tools.iter().enumerate() {
+                let response = cards::source_card(
+                    ui,
+                    Rect::from_min_size(
+                        Pos2::new(x + index as f32 * (cw + 12.0), y),
+                        Vec2::new(cw, 68.0),
+                    ),
+                    Id::new(("tool", group_index, index)),
+                    icon,
+                    title,
+                    subtitle,
+                    t,
+                );
+                if group_index == 1 && index == 0 && response.clicked() {
+                    open_devices = true;
+                }
+            }
+            y += 84.0;
+        }
+        if open_devices {
+            self.page = Page::Devices;
+            self.scroll = 0.0;
+            ui.set_clip_rect(original_clip);
+            return;
+        }
         if max_scroll > 0.0 {
             let track = Rect::from_min_max(
                 Pos2::new(content.right() - 13.0, content.top() + 8.0),
-                Pos2::new(content.right() - 8.0, content.bottom() - 8.0),
+                Pos2::new(content.right() - 8.0, scroll_area.bottom() - 8.0),
             );
-            let height = (track.height() * content.height() / content_h).max(32.0);
+            let height = (track.height() * scroll_area.height() / content_h).max(32.0);
             let thumb = Rect::from_min_size(
                 Pos2::new(
                     track.left(),
@@ -360,10 +612,16 @@ impl App {
             ui.painter()
                 .rect_filled(thumb, cr(3.0), with_alpha(t.text_faint, 0.8));
         }
+        ui.set_clip_rect(original_clip);
+        promo(
+            ui,
+            Rect::from_min_size(Pos2::new(x, banner_top), Vec2::new(w, 52.0)),
+            t,
+        );
     }
 }
 fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &str), t: &Theme) {
-    let (name, sub, used, state) = data;
+    let (name, sub, _, _) = data;
     let id = Id::new(("device", k));
     let resp = ui.interact(rect, id, Sense::click());
     let h = ui
@@ -371,14 +629,13 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
         .animate_bool_with_time(id.with("h"), resp.hovered(), 0.15);
     let p = ui.painter().clone();
     if h > 0.0 {
-        p.rect_filled(rect, cr(10.0), with_alpha(t.surface_hi, h * 0.7));
+        p.rect_filled(rect, cr(4.0), with_alpha(t.surface_hi, h * 0.5));
     }
     let tile = Rect::from_center_size(
-        Pos2::new(rect.left() + 32.0, rect.center().y),
+        Pos2::new(rect.left() + 18.0, rect.center().y),
         Vec2::splat(36.0),
     );
-    let tc = if k == 0 { t.accent } else { t.warn };
-    p.rect_filled(tile, cr(8.0), with_alpha(tc, 0.18));
+    let tc = t.text_dim;
     widgets::draw_icon(
         &p,
         if k == 0 { Icon::Disk } else { Icon::External },
@@ -399,32 +656,6 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
         font(11.5),
         t.text_dim,
     );
-    let bar = Rect::from_min_size(
-        Pos2::new(rect.right() - 370.0, rect.center().y - 9.0),
-        Vec2::new(180.0, 8.0),
-    );
-    let col = if used > 0.9 {
-        t.danger
-    } else if used > 0.75 {
-        t.warn
-    } else {
-        t.ok
-    };
-    widgets::progress_bar(&p, bar, Some(used), t, 0.25, Some(col));
-    p.text(
-        Pos2::new(bar.left(), bar.bottom() + 10.0),
-        Align2::LEFT_CENTER,
-        format!("状态 {state}"),
-        font(11.0),
-        t.text_faint,
-    );
-    p.text(
-        Pos2::new(bar.right(), bar.bottom() + 10.0),
-        Align2::RIGHT_CENTER,
-        "通道就绪",
-        bold(11.0),
-        col,
-    );
     let btn = Rect::from_min_size(
         Pos2::new(rect.right() - 102.0, rect.center().y - 15.0),
         Vec2::new(90.0, 30.0),
@@ -438,19 +669,6 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
         BtnStyle::Primary,
         t,
     );
-    if k == 0 {
-        widgets::icon_button(
-            ui,
-            Rect::from_center_size(
-                Pos2::new(btn.left() - 20.0, btn.center().y),
-                Vec2::splat(26.0),
-            ),
-            id.with("refresh"),
-            Icon::Refresh,
-            t,
-            true,
-        );
-    }
 }
 
 fn nav_item(
@@ -477,7 +695,7 @@ fn nav_item(
     if fill > 0.0 {
         p.rect_filled(rect, cr(8.0), with_alpha(theme.text, 0.05 * fill));
     }
-    let col = if theme.name == "Paper" {
+    let col = if theme.name == "Paper" || theme.name == "Mist" {
         Color32::BLACK
     } else if active {
         theme.text
@@ -646,4 +864,87 @@ fn promo(ui: &mut egui::Ui, rect: Rect, theme: &Theme) {
             theme.text_dim,
         );
     }
+}
+
+/// Pagination dropdown with explicit geometry and a shared text baseline.
+fn pagination_select(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    id: Id,
+    selected: &mut usize,
+    label: String,
+    options: &[(usize, String)],
+    theme: &Theme,
+) {
+    let response = ui.interact(rect, id, Sense::click());
+    let popup_id = id.with("menu");
+    let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+    let hot = response.hovered() || open;
+    let p = ui.painter();
+    p.rect_filled(
+        rect,
+        cr(6.0),
+        if hot { theme.surface_hi } else { theme.surface },
+    );
+    p.rect_stroke(
+        rect,
+        cr(6.0),
+        Stroke::new(1.0, if hot { theme.text_faint } else { theme.stroke }),
+        egui::StrokeKind::Inside,
+    );
+    p.text(
+        Pos2::new(rect.left() + 10.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font(12.0),
+        theme.text,
+    );
+    let c = Pos2::new(rect.right() - 12.0, rect.center().y);
+    let direction = if open { -1.0 } else { 1.0 };
+    p.add(egui::Shape::line(
+        vec![
+            c + Vec2::new(-3.0, -1.5 * direction),
+            c + Vec2::new(0.0, 1.5 * direction),
+            c + Vec2::new(3.0, -1.5 * direction),
+        ],
+        Stroke::new(1.3, theme.text_dim),
+    ));
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    egui::Popup::menu(&response)
+        .id(popup_id)
+        .width(rect.width().max(96.0))
+        .show(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            for (value, text) in options {
+                let (row, response) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+                if response.hovered() || *selected == *value {
+                    ui.painter().rect_filled(row, cr(4.0), theme.surface_hi);
+                }
+                ui.painter().text(
+                    Pos2::new(row.left() + 8.0, row.center().y),
+                    Align2::LEFT_CENTER,
+                    text,
+                    font(12.0),
+                    theme.text,
+                );
+                if *selected == *value {
+                    widgets::draw_icon(
+                        ui.painter(),
+                        Icon::Check,
+                        Rect::from_center_size(
+                            Pos2::new(row.right() - 10.0, row.center().y),
+                            Vec2::splat(12.0),
+                        ),
+                        theme.text_dim,
+                    );
+                }
+                if response.clicked() {
+                    *selected = *value;
+                    ui.close();
+                }
+            }
+        });
 }
