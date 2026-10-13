@@ -1,0 +1,9 @@
+[package]
+name = "rd-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+eframe = { version = "0.36", features = ["wgpu"] }
+egui = "0.36"

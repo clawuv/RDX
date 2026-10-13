@@ -1,0 +1,35 @@
+# cargo-deny 配置。
+# 注意：本项目许可证未定（见 README）。若走闭源商用，先收紧本文件的许可白名单
+# （移除 MPL-2.0 等弱 copyleft 项），并逐条审查新依赖。
+
+[graph]
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+deny = []
+
+[advisories]
+version = 2
+yanked = "deny"
