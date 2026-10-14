@@ -171,8 +171,10 @@ pub fn mist() -> Theme {
     theme.text = c(0x1c, 0x1d, 0x20);
     theme.text_dim = c(0x6d, 0x6e, 0x73);
     theme.text_faint = c(0x94, 0x95, 0x9b);
-    theme.accent = c(0x65, 0x67, 0x6e);
-    theme.accent2 = c(0x85, 0x87, 0x8e);
+    // A deep, clean blue for toggles / primary actions; the old warm gray
+    // read as a muddy blob on the paper-white surfaces.
+    theme.accent = c(0x25, 0x63, 0xeb);
+    theme.accent2 = c(0x3b, 0x82, 0xf6);
     theme.ok = c(0x58, 0xa4, 0x80);
     theme.warn = c(0xd8, 0xa4, 0x44);
     theme.neutral = c(0xb9, 0xba, 0xbf);
@@ -192,8 +194,10 @@ pub fn mist_dark() -> Theme {
     t.text = c(235, 237, 237);
     t.text_dim = c(180, 184, 184);
     t.text_faint = c(145, 150, 150);
-    t.accent = c(174, 182, 182);
-    t.accent2 = c(204, 210, 210);
+    // Neutral green-gray accents look muddy on charcoal; a clear blue reads
+    // far better for toggles, primary buttons and selection states.
+    t.accent = c(59, 130, 246);
+    t.accent2 = c(96, 165, 250);
     t.neutral = c(82, 87, 87);
     t
 }

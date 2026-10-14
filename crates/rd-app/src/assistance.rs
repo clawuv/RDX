@@ -246,8 +246,8 @@ impl Assistance {
                     );
                     if !self.notice.is_empty() {
                         p.text(
-                            Pos2::new(x, y + 256.0),
-                            Align2::LEFT_CENTER,
+                            Pos2::new(x + w, input_y + 60.0),
+                            Align2::RIGHT_CENTER,
                             &self.notice,
                             font(12.0),
                             theme.text_dim,

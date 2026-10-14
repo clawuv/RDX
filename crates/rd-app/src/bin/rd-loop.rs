@@ -10,7 +10,15 @@ use std::time::{Duration, Instant};
 use rd_app::pipeline::{self, LoopFrame, PipelineConfig};
 use rd_app::stats::{GpuDoneSnapshot, RenderCounters, Samples};
 use rd_app::video::{VideoShared, YuvPaintCallback};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
+
+fn unix_us() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0)
+}
 
 fn main() -> eframe::Result<()> {
     let duration = match std::env::var("RDX_LOOP_SECONDS") {
@@ -41,11 +49,36 @@ fn main() -> eframe::Result<()> {
             return Ok(());
         }
     };
+    let fingerprint = std::env::var("RDX_LOOP_FINGERPRINT").as_deref() == Ok("1");
+    let fp_y_offset: usize = std::env::var("RDX_FP_Y_OFFSET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| *v <= 1024)
+        .unwrap_or(0);
+    let trace_file = std::env::var("RDX_LOOP_TRACE_FILE")
+        .ok()
+        .filter(|p| !p.is_empty());
+    // 可选窗口定位（实验/录屏用；默认交给系统摆放）。
+    let position = match (
+        std::env::var("RDX_LOOP_X")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok()),
+        std::env::var("RDX_LOOP_Y")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok()),
+    ) {
+        (Some(x), Some(y)) => Some([x, y]),
+        _ => None,
+    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("RDX — P1 回环")
+        .with_inner_size([980.0, 640.0]);
+    if let Some(position) = position {
+        viewport = viewport.with_position(position);
+    }
     let options = eframe::NativeOptions {
         wgpu_options: rd_app::wgpu_configuration(),
-        viewport: egui::ViewportBuilder::default()
-            .with_title("RDX — P1 回环")
-            .with_inner_size([980.0, 640.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -56,6 +89,9 @@ fn main() -> eframe::Result<()> {
             let mut app = LoopApp::new(cc.egui_ctx.clone(), shared);
             app.duration = duration;
             app.hide_after = hide_after;
+            app.fingerprint = fingerprint;
+            app.fp_y_offset = fp_y_offset;
+            app.trace_file = trace_file;
             Ok(Box::new(app))
         }),
     )
@@ -78,6 +114,11 @@ struct LoopApp {
     previous_counters: RenderCounters,
     logic_ticks: u32,
     unique_draw_fps: f32,
+    fingerprint: bool,
+    fp_y_offset: usize,
+    trace_file: Option<String>,
+    last_fingerprint: Option<u8>,
+    fingerprint_log: Vec<(u64, u8)>,
 }
 
 impl LoopApp {
@@ -108,6 +149,11 @@ impl LoopApp {
             previous_counters: RenderCounters::default(),
             logic_ticks: 0,
             unique_draw_fps: 0.0,
+            fingerprint: false,
+            fp_y_offset: 0,
+            trace_file: None,
+            last_fingerprint: None,
+            fingerprint_log: Vec::new(),
         }
     }
 
@@ -139,6 +185,21 @@ impl LoopApp {
         self.e2e_ms
             .push((pipeline::now_us() - frame.frame.timestamp_us) as f32 / 1000.0);
         self.frames_this_second += 1;
+        if self.fingerprint {
+            let (w, h) = (frame.frame.width as usize, frame.frame.height as usize);
+            if let Some(bits) = rd_app::pattern::read_fingerprint_with_offset(
+                &frame.frame.data[..(w * h).min(frame.frame.data.len())],
+                w,
+                self.fp_y_offset,
+            ) {
+                if self.last_fingerprint != Some(bits) {
+                    self.last_fingerprint = Some(bits);
+                    let unix = unix_us();
+                    self.fingerprint_log.push((unix, bits));
+                    eprintln!("loop-fingerprint {bits} {unix}");
+                }
+            }
+        }
     }
 
     fn report_rates(&mut self) {
@@ -199,6 +260,31 @@ impl eframe::App for LoopApp {
                 };
                 eprintln!("rdx bounded summary: elapsed={:.2}s uploads={} draws={} unique_draws={} superseded={} pipeline_stopped={} rolling_upload_p50/p95={:.2}/{:.2}ms gpu_done={} register→fire_p50/p95={:.2}/{:.2}ms capture→gpu_done_p50/p95={:.2}/{:.2}ms (uploads+prior draws; not presentation)",
                     self.started.elapsed().as_secs_f64(), counts.uploads, counts.draws, counts.unique_draws, counts.superseded, self.pipeline_stopped, self.e2e_ms.percentile(0.5), self.e2e_ms.percentile(0.95), gpu.completions, gpu.register_to_fire_p50_ms, gpu.register_to_fire_p95_ms, gpu.capture_to_gpu_done_p50_ms, gpu.capture_to_gpu_done_p95_ms);
+                if let Some(path) = self.trace_file.as_ref() {
+                    if let Ok(text) = std::fs::read_to_string(path) {
+                        let trace = rd_app::pattern::parse_trace(&text);
+                        if !trace.is_empty() {
+                            let delays = rd_app::pattern::match_delays_ms(
+                                &trace,
+                                &self.fingerprint_log,
+                                2_000_000,
+                            );
+                            let mut samples = Samples::default();
+                            for delay in &delays {
+                                samples.push(*delay);
+                            }
+                            eprintln!(
+                                "rdx fingerprint e2e: matched={}/{} pattern_issue→upload p50/p95={:.2}/{:.2}ms (present+capture+codec to decoded upload; capture_ts→upload was {:.2}/{:.2}ms)",
+                                delays.len(),
+                                self.fingerprint_log.len(),
+                                samples.percentile(0.5),
+                                samples.percentile(0.95),
+                                self.e2e_ms.percentile(0.5),
+                                self.e2e_ms.percentile(0.95),
+                            );
+                        }
+                    }
+                }
                 self.summary_reported = true;
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -294,6 +380,11 @@ mod acceptance_tests {
             previous_counters: RenderCounters::default(),
             logic_ticks: 10,
             unique_draw_fps: 30.0,
+            fingerprint: false,
+            fp_y_offset: 0,
+            trace_file: None,
+            last_fingerprint: None,
+            fingerprint_log: Vec::new(),
         }
     }
 

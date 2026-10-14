@@ -217,7 +217,7 @@ fn theme_choice(
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 88.0), Sense::click());
     response = response
         .on_hover_text(hint)
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
+        .on_hover_cursor(egui::CursorIcon::Default);
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,

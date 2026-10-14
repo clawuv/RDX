@@ -64,6 +64,7 @@ fn main() -> eframe::Result<()> {
                 devices_per_page: 5,
                 device_filter: 0,
                 updates: updates::Updates::default(),
+                tool_status: None,
             }))
         }),
     )
@@ -193,6 +194,7 @@ struct App {
     devices_per_page: usize,
     device_filter: usize,
     updates: updates::Updates,
+    tool_status: Option<String>,
 }
 impl eframe::App for App {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
@@ -265,6 +267,7 @@ impl eframe::App for App {
             if let Some(page) = draw_sidebar(ui, side, &self.theme, self.page, &mut self.updates) {
                 self.page = page;
                 self.scroll = 0.0;
+                self.tool_status = None;
             }
         }
         let content = Rect::from_min_max(
@@ -615,26 +618,62 @@ impl App {
         let original_clip = ui.clip_rect();
         ui.set_clip_rect(original_clip.intersect(scroll_area));
         #[allow(clippy::type_complexity)] // 静态页数据表，展开成类型别名反而绕
-        let groups: [(&str, &[(Icon, &str, &str)]); 3] = [
+        let groups: [(&str, &[Tool]); 3] = [
             (
                 "推荐工具",
                 &[
-                    (Icon::Monitor, "TMX", "SSH 终端工具"),
-                    (Icon::Disk, "DBX", "数据库管理"),
+                    Tool {
+                        icon: Icon::Monitor,
+                        title: "TMX",
+                        sub: "SSH 终端工具",
+                        app: "TMX",
+                        url: "https://github.com/clawuv/TMX",
+                    },
+                    Tool {
+                        icon: Icon::Disk,
+                        title: "DBX",
+                        sub: "数据库管理",
+                        app: "DBX",
+                        url: "https://github.com/t8y2/dbx/releases",
+                    },
                 ],
             ),
             (
                 "远程访问",
                 &[
-                    (Icon::Server, "远程设备", "查看设备并建立远程会话"),
-                    (Icon::Cloud, "Web 控制台", "浏览器控制端（规划中）"),
+                    Tool {
+                        icon: Icon::Server,
+                        title: "远程设备",
+                        sub: "查看设备并建立远程会话",
+                        app: "",
+                        url: "",
+                    },
+                    Tool {
+                        icon: Icon::Cloud,
+                        title: "Web 控制台",
+                        sub: "浏览器控制端（规划中）",
+                        app: "",
+                        url: "",
+                    },
                 ],
             ),
             (
                 "图像设计",
                 &[
-                    (Icon::Eye, "PhotoCraft", "AI 图像设计助手"),
-                    (Icon::Pencil, "OpenPencil", "原型设计软件"),
+                    Tool {
+                        icon: Icon::Eye,
+                        title: "PhotoCraft",
+                        sub: "AI 图像设计助手",
+                        app: "PhotoCraft",
+                        url: "https://github.com/storytold/photocraft/releases",
+                    },
+                    Tool {
+                        icon: Icon::Pencil,
+                        title: "OpenPencil",
+                        sub: "原型设计软件",
+                        app: "OpenPencil",
+                        url: "https://github.com/ZSeven-W/openpencil/releases",
+                    },
                 ],
             ),
         ];
@@ -656,21 +695,6 @@ impl App {
             display(22.0),
             t.text,
         );
-        if widgets::icon_button(
-            ui,
-            Rect::from_center_size(Pos2::new(x + w - 16.0, y + 16.0), Vec2::splat(32.0)),
-            Id::new("settings"),
-            Icon::Gear,
-            t,
-            true,
-        )
-        .clicked()
-        {
-            self.page = Page::Settings;
-            self.scroll = 0.0;
-            ui.set_clip_rect(original_clip);
-            return;
-        }
         y += 44.0;
         let cw = (w - 12.0) / 2.0;
         let mut open_devices = false;
@@ -683,24 +707,79 @@ impl App {
                 t.text,
             );
             y += 28.0;
-            for (index, &(icon, title, subtitle)) in tools.iter().enumerate() {
+            for (index, tool) in tools.iter().enumerate() {
+                let installable = !tool.url.is_empty();
+                let card_rect = Rect::from_min_size(
+                    Pos2::new(x + index as f32 * (cw + 12.0), y),
+                    Vec2::new(cw, 68.0),
+                );
                 let response = cards::source_card(
                     ui,
-                    Rect::from_min_size(
-                        Pos2::new(x + index as f32 * (cw + 12.0), y),
-                        Vec2::new(cw, 68.0),
-                    ),
+                    card_rect,
                     Id::new(("tool", group_index, index)),
-                    icon,
-                    title,
-                    subtitle,
+                    tool.icon,
+                    tool.title,
+                    tool.sub,
                     t,
+                    if installable { 72.0 } else { 0.0 },
                 );
-                if group_index == 1 && index == 0 && response.clicked() {
+                if group_index == 1 && index == 0 && response.clicked() && !installable {
                     open_devices = true;
+                }
+                if installable {
+                    // One button: launch if the app is already installed, otherwise open
+                    // its releases page to install. Detection is a cheap path check so
+                    // it stays responsive even during hover-heavy scrolling.
+                    let installed = is_app_installed(tool.app);
+                    let bw = 52.0;
+                    let bh = 26.0;
+                    let btn_rect = Rect::from_min_size(
+                        Pos2::new(
+                            card_rect.right() - 12.0 - bw,
+                            card_rect.center().y - bh / 2.0,
+                        ),
+                        Vec2::new(bw, bh),
+                    );
+                    let clicked = widgets::button(
+                        ui,
+                        btn_rect,
+                        Id::new(("tool-action", group_index, index)),
+                        if installed { "打开" } else { "安装" },
+                        None,
+                        if installed {
+                            BtnStyle::Primary
+                        } else {
+                            BtnStyle::Subtle
+                        },
+                        t,
+                    )
+                    .clicked();
+                    if clicked {
+                        if installed {
+                            self.tool_status = Some(match launch_app(tool.app) {
+                                Ok(()) => format!("正在启动 {}", tool.title),
+                                Err(err) => {
+                                    format!("未能启动 {}（{err}）", tool.title)
+                                }
+                            });
+                        } else {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(tool.url));
+                            self.tool_status =
+                                Some(format!("已在浏览器打开 {} 发布页", tool.title));
+                        }
+                    }
                 }
             }
             y += 84.0;
+        }
+        if let Some(status) = &self.tool_status {
+            ui.painter().text(
+                Pos2::new(x + w, content.top() + header + 13.5),
+                Align2::RIGHT_CENTER,
+                status.clone(),
+                font(11.5),
+                t.text_dim,
+            );
         }
         if open_devices {
             self.page = Page::Devices;
@@ -783,15 +862,15 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
         t.text_dim,
     );
     let btn = Rect::from_min_size(
-        Pos2::new(rect.right() - 102.0, rect.center().y - 15.0),
-        Vec2::new(90.0, 30.0),
+        Pos2::new(rect.right() - 12.0 - 64.0, rect.center().y - 15.0),
+        Vec2::new(64.0, 30.0),
     );
     widgets::button(
         ui,
         btn,
         id.with("connect"),
         if k == 0 { "查看" } else { "连接" },
-        Some(if k == 0 { Icon::Eye } else { Icon::Bolt }),
+        None,
         BtnStyle::Primary,
         t,
     );
@@ -814,7 +893,7 @@ fn nav_item(
         .ctx()
         .animate_bool_with_time(id.with("h"), resp.hovered() && !active, 0.12);
     if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     let p = ui.painter().clone();
     // selected and hover share the same pill; the label colour tells them apart
@@ -909,7 +988,7 @@ fn promo(ui: &mut egui::Ui, rect: Rect, theme: &Theme) {
         .ctx()
         .animate_bool_with_time(id.with("h"), resp.hovered(), 0.12);
     if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     let p = ui.painter();
     p.rect_filled(
@@ -1003,6 +1082,59 @@ fn promo(ui: &mut egui::Ui, rect: Rect, theme: &Theme) {
     }
 }
 
+/// 工具页静态条目:`app` 为可启动的本地应用名,`url` 为安装页地址;空串表示不适用。
+struct Tool {
+    icon: Icon,
+    title: &'static str,
+    sub: &'static str,
+    app: &'static str,
+    url: &'static str,
+}
+
+/// 本地是否已安装该应用（macOS 检查 /Applications 与用户级 Applications 目录）。
+fn is_app_installed(name: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let mut dirs = vec![std::path::PathBuf::from("/Applications")];
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::Path::new(&home).join("Applications"));
+        }
+        dirs.into_iter()
+            .any(|dir| dir.join(format!("{name}.app")).is_dir())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
+/// 启动本地已安装应用;失败(未安装/平台不支持)时返回错误说明。
+fn launch_app(name: &str) -> Result<(), &'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        let ok = std::process::Command::new("open")
+            .args(["-a", name])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        ok.then_some(()).ok_or("应用未安装")
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", name])
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| "无法启动应用")
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = name;
+        Err("当前平台不支持一键打开")
+    }
+}
+
 /// Shared device filter/pagination dropdown with a consistent text baseline.
 fn pagination_select(
     ui: &mut egui::Ui,
@@ -1047,7 +1179,7 @@ fn pagination_select(
         Stroke::new(1.3, theme.text_dim),
     ));
     if response.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     egui::Popup::menu(&response)
         .id(popup_id)

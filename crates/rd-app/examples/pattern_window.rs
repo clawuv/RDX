@@ -9,7 +9,11 @@
 //! 可选环境变量：
 //! - `RDX_PATTERN_FPS=1..120`（默认 30）
 //! - `RDX_PATTERN_SECONDS=1..120`：限时运行后输出汇总并正常关闭
-//! - `RDX_PATTERN_FULLSCREEN=1`：启动即全屏
+//! - `RDX_PATTERN_FULLSCREEN=1`：启动即全屏（注意：macOS 原生全屏切独立
+//!   Space，其他窗口聚焦后图案不在当前显示内容里，勿与 rd-loop 同用）
+//! - `RDX_PATTERN_BORDERLESS=1` + `RDX_PATTERN_X/Y/W/H`：无边框窗口按指定
+//!   位置与尺寸显示——不触发 Space 切换，可与 rd-loop 共存；铺满宽度时
+//!   指纹仍与屏幕原生像素几何对齐
 //! - `RDX_PATTERN_TRACE=1`：逐帧输出 `pattern-trace <frame> <unix_us>`，
 //!   供 present_probe 跨进程对齐（时钟为系统墙钟）
 //! - `RDX_PATTERN_HIDE_AFTER=<秒>`：到时隐藏窗口（Visible(false)），用于前台/
@@ -23,11 +27,33 @@ fn main() -> eframe::Result<()> {
     let hide_after: Option<u64> = env_in_range("RDX_PATTERN_HIDE_AFTER", 1..=120);
     let fullscreen = std::env::var("RDX_PATTERN_FULLSCREEN").as_deref() == Ok("1");
     let trace = std::env::var("RDX_PATTERN_TRACE").as_deref() == Ok("1");
+    let borderless = std::env::var("RDX_PATTERN_BORDERLESS").as_deref() == Ok("1");
+    let position = match (
+        env_in_range::<f32>("RDX_PATTERN_X", f32::MIN..=f32::MAX),
+        env_in_range::<f32>("RDX_PATTERN_Y", f32::MIN..=f32::MAX),
+    ) {
+        (Some(x), Some(y)) => Some([x, y]),
+        _ => None,
+    };
+    let size = match (
+        env_in_range::<f32>("RDX_PATTERN_W", 64.0..=16384.0),
+        env_in_range::<f32>("RDX_PATTERN_H", 64.0..=16384.0),
+    ) {
+        (Some(w), Some(h)) => Some([w, h]),
+        _ => None,
+    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("RDX — 受控动态测试画面")
+        .with_inner_size(size.unwrap_or([980.0, 640.0]));
+    if let Some(position) = position {
+        viewport = viewport.with_position(position);
+    }
+    if borderless {
+        viewport = viewport.with_decorations(false);
+    }
     let options = eframe::NativeOptions {
         wgpu_options: rd_app::wgpu_configuration(),
-        viewport: egui::ViewportBuilder::default()
-            .with_title("RDX — 受控动态测试画面")
-            .with_inner_size([980.0, 640.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(

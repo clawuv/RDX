@@ -1,6 +1,9 @@
 # RDX 实施计划
 
 - 状态：执行中（P1 合成视频链路验证；尚未验收）
+- 延迟预算口径已定（ADR-0007，2026-10-14 代拟可推翻）：v1 以“捕获到上屏（内容观测法）p50<80ms”为 P1 退出标准，工程内控“捕获→GPU 完成 p95<50ms”（release 现测 41.3/46.2ms 达标）；呈现侧优化登记为 v1 后项。依据：内容归因端到端 release 66.8ms p50（531/531 配对），瓶颈在合成/呈现链（≈58ms）而非软编软解（8.75ms）。详见 docs/adr/0007 与 docs/p1-macos-2026-10-14.md。
+- P1 验收前置收尾：管道停止提示运行中检查通过（非法显示器索引触发，红色提示+占位文本，截屏验证）；1080p30 回环 demo 录屏已生成（target/p1-demo-macos.mov，构建产物）。新口径下 macOS 侧数字指标已满足（66.8<80ms；内控 46.2<50ms），P1 整体验收仍待：CPU 占用预算量化定义、Windows 实机回归、受控多次采样统计——完成前不宣布 P1 通过。
+- 端到端复测与收尾（release）：内容归因指纹端到端 531/531 全配对——图案发布→解码上传 p50/p95=66.8/82.1ms；编解码管道 8.75/10.96ms，呈现+采集链 ≈58ms（present_probe 交叉验证 49.5–50.3ms）。按"捕获到上屏 <50ms"定义现状 p50≈49–67ms，临界至超出；瓶颈在合成/呈现链而非软编软解。受控遮挡复测确认：定位窗口完全覆盖时 draw=0 而 logic≈60/s，解除即刻恢复，管道全程不受影响。Inter 字体核对为 v4.001（上游 SIL OFL-1.1，与 AGPL 兼容，发行须附 OFL 全文）。待决策：(a) 立项呈现侧优化后复验，或 (b) v1 放宽至 p50<80ms、以捕获→GPU 完成（release p50 41.3/p95 46.2ms）为内控。详见 docs/p1-macos-2026-10-14.md。
 - rd-loop 前台/遮挡/隐藏对比：新增 `RDX_LOOP_HIDE_AFTER`，单轮 24 秒取得三状态数据——前台 draw 60/s·unique_draw 30/s；被完全遮挡时 logic 仍 60/s 但 draw=0、superseded≈30/s（上传照常、绘制回调不执行）；隐藏后 logic/upload 节流至 8.8/s。管道线程全程 30fps 不受 UI 状态影响。50ms 预算分段判定依据已写入文档：CPU 管道 p95≈11.5ms 余量充足，风险在合成/呈现链（本地窗口发布→可见≈51ms）；维持"捕获→上屏"定义则预算高风险，收紧为"捕获→GPU 完成"（p95≈47ms 含调度上界）则逼近达标——需决策，建议先做回环端到端指纹观测再定。详见 docs/p1-macos-2026-10-14.md。
 - 呈现观测：pattern_window 新增逐帧 trace 与帧号低 8 位指纹角标（rd-app/src/pattern.rs 绘制/读取共用几何，含单测），新增 present_probe 探针用 SCK 捕获读回指纹并与 trace 对齐，首次测得“图案帧发布→被显示器内容捕获观察到”前台 p50/p95≈50/58ms（debug 与 release 一致；release 下回调内转换 0.45ms/帧，~50ms 主要来自呈现/合成/显示刷新/SCStream 交付链，为观测上界而非呈现回调）；`Visible(false)` 隐藏后检出 ~11s 冻结段，macOS 全屏窗口对 Minimized 命令无响应。本地窗口发布→可见已 ≈3 个 60Hz 刷新周期，P1 的 50ms 预算需先明确测量点定义再判定；rd-loop 遮挡对比待做，详见 docs/p1-macos-2026-10-14.md。
 - 发行许可定为 AGPL-3.0-only：LICENSE、11 个 workspace crate 元数据与 deny.toml 白名单同步，化解 MIT LICENSE 与 AGPL 派生 UI 并存的冲突；字体许可与第三方定向例外（BSL/OFL）仍待核对，见 docs/licensing-inventory.md。
@@ -94,7 +97,7 @@ rd/  （实际目录名 RDX）
 - 捕获：先做 Windows DXGI（脏矩形信息最全）+ macOS ScreenCaptureKit；Linux 先 X11（xcb damage），Wayland 排 P2。
 - 编码：openh264 软编起步（基线永远可用），硬编按 MF / VideoToolbox / VAAPI 顺序接入；解码软解起步。
 - egui 渲染（本项目最关键的技术点）：解码输出保持 NV12/I420，用 `egui_wgpu` 的 `CallbackTrait` 挂自定义 wgpu pass，YUV→RGB 在 shader 里做，CPU 侧零转换；纹理用 `Queue::write_texture` 上传；解码线程到 UI 用帧到达事件驱动 `ctx.request_repaint()`。
-- **退出标准**：1080p30 端到端延迟（捕获到上屏）< 50ms，CPU 占用可接受；回环 demo 录屏。
+- **退出标准**（ADR-0007 调整）：1080p30 端到端延迟（捕获到上屏，内容观测法）p50 < 80ms，工程内控“捕获→GPU 完成”p95 < 50ms，CPU 占用可接受；回环 demo 录屏。
 - 延迟需用同一参考设备、固定分辨率/帧率和可复现素材测量；分别记录捕获、编码、上传、解码、呈现耗时及 p50/p95，不能只凭录屏观感验收。测试需至少覆盖软编基线和实际 GPU 上传路径。
 - 该阶段先验证 GPU 帧互操作与真实纹理上传；“解码输出 NV12/I420”不等于硬件解码帧可零拷贝上传。若必须下载到 CPU，记录拷贝次数、带宽与 p95 延迟，并据此重估后续跨平台工作量。
 - **风险**：egui/wgpu 版本 API 变动（钉版本）；若 `CallbackTrait` 路径受阻，降级方案是 `TextureHandle` + CPU 转 RGB（慢但能跑），不阻塞后续阶段。

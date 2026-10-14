@@ -47,10 +47,20 @@ pub fn sample_col_px(width: usize, bit: u32) -> Option<usize> {
     }
 }
 
-/// 从捕获帧 Y 平面读取指纹；返回帧号低 8 位。
-/// 采样各方块中心 5×5 平均亮度，阈值 128。宽度或数据不足返回 None。
+/// 从捕获帧 Y 平面读取指纹；返回帧号低 8 位（全屏图案，行偏移 0）。
 pub fn read_fingerprint(y_plane: &[u8], width: usize) -> Option<u8> {
-    let row = sample_row_px();
+    read_fingerprint_with_offset(y_plane, width, 0)
+}
+
+/// 带行偏移读取指纹：无边框条带窗口模式下，窗口内容起点在菜单栏下方
+/// （实测约 30px），需把指纹采样行整体下移。偏移来自实际窗口位置。
+/// 采样各方块中心 5×5 平均亮度，阈值 128。宽度或数据不足返回 None。
+pub fn read_fingerprint_with_offset(
+    y_plane: &[u8],
+    width: usize,
+    y_offset_px: usize,
+) -> Option<u8> {
+    let row = sample_row_px() + y_offset_px;
     if width == 0 || y_plane.len() <= (row + 3) * width {
         return None;
     }
@@ -133,16 +143,61 @@ pub fn draw(painter: &Painter, rect: Rect, ppp: f32, frame: u64, fps: u32) {
     );
 }
 
+/// 解析 pattern_window 的 trace 文件，返回按时间升序的 (帧号, 发布墙钟μs)。
+pub fn parse_trace(text: &str) -> Vec<(u64, u64)> {
+    let mut trace: Vec<(u64, u64)> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            match (parts.next()?, parts.next()?, parts.next()?) {
+                ("pattern-trace", frame, unix) => Some((frame.parse().ok()?, unix.parse().ok()?)),
+                _ => None,
+            }
+        })
+        .collect();
+    trace.sort_unstable_by_key(|(_, unix)| *unix);
+    trace
+}
+
+/// 对齐转场观测与图案 trace：为每个观测找最近的同指纹且不晚于它的发布时刻，
+/// 返回成功配对的时延（毫秒）。超过 `max_delay_us` 或无候选的观测被丢弃。
+/// 观测应已按“指纹变化”筛选（新内容到达），否则冻结内容会配到错误的轮次。
+pub fn match_delays_ms(
+    trace: &[(u64, u64)],
+    transitions: &[(u64, u8)],
+    max_delay_us: u64,
+) -> Vec<f32> {
+    let mut delays = Vec::new();
+    for (t_obs, bits) in transitions {
+        let issue = trace
+            .iter()
+            .rev()
+            .find(|(frame, unix)| *unix <= *t_obs && (*frame & 0xff) == *bits as u64)
+            .map(|(_, unix)| *unix);
+        if let Some(unix) = issue {
+            let delay_us = t_obs.saturating_sub(unix);
+            if delay_us <= max_delay_us {
+                delays.push(delay_us as f32 / 1000.0);
+            }
+        }
+    }
+    delays
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn synthetic_y(width: usize, height: usize, frame_low8: u8) -> Vec<u8> {
+        synthetic_y_offset(width, height, frame_low8, 0)
+    }
+
+    fn synthetic_y_offset(width: usize, height: usize, frame_low8: u8, offset: usize) -> Vec<u8> {
         let mut y = vec![40u8; width * height]; // 棋盘底灰度低于阈值。
         for bit in 0..FINGERPRINT_BITS {
             let bright = (frame_low8 >> bit) & 1 == 1;
             let cx = sample_col_px(width, bit).expect("square inside plane");
-            let row = sample_row_px();
+            let row = sample_row_px() + offset;
             for dy in 0..SQUARE_PX as usize {
                 for dx in 0..SQUARE_PX as usize {
                     let x = cx - SQUARE_PX as usize / 2 + dx;
@@ -160,6 +215,14 @@ mod tests {
             let width = 3840;
             let y = synthetic_y(width, 96, frame_low8);
             assert_eq!(read_fingerprint(&y, width), Some(frame_low8));
+            // 行偏移模式下采样行同步下移，同一帧数据仍可读回。
+            let y = synthetic_y_offset(width, 96, frame_low8, 30);
+            assert_eq!(
+                read_fingerprint_with_offset(&y, width, 30),
+                Some(frame_low8)
+            );
+            // 偏移不一致时读到棋盘底（恒 0）而不是原指纹。
+            assert_eq!(read_fingerprint_with_offset(&y, width, 0), Some(0));
         }
     }
 
@@ -179,5 +242,23 @@ mod tests {
             assert!(r.right() <= rect.right());
             assert!(r.top() >= rect.top());
         }
+    }
+
+    #[test]
+    fn delay_matching_picks_latest_candidate_and_drops_stale() {
+        use super::match_delays_ms;
+        // 帧号 1、257 指纹相同（低 8 位），相隔一个轮次。
+        let trace = vec![(1u64, 1_000u64), (2, 34_000), (3, 67_000), (257, 8_600_000)];
+        let ms = |us: u64, bits: u8| vec![(us, bits)];
+        // 观测到指纹 2：应配最近的第 2 帧，时延 11ms。
+        let out = match_delays_ms(&trace, &ms(45_000, 2), 2_000_000);
+        assert_eq!(out, vec![11.0]);
+        // 观测早于全部候选：无配对。
+        assert!(match_delays_ms(&trace, &ms(500, 2), 2_000_000).is_empty());
+        // 指纹 3 的唯一候选在 67ms，9s 的观测超时丢弃。
+        assert!(match_delays_ms(&trace, &ms(9_000_000, 3), 2_000_000).is_empty());
+        // 指纹 1 出现新轮次（257）：配最近的 257 而不是第 1 帧，时延 100ms。
+        let out = match_delays_ms(&trace, &ms(8_700_000, 1), 2_000_000);
+        assert_eq!(out, vec![100.0]);
     }
 }

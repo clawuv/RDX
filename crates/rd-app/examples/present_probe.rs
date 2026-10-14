@@ -38,6 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let origin = Instant::now();
     let origin_unix = unix_us();
+    // 指纹行偏移：无边框条带窗口内容起点在菜单栏下方（实测约 30px）；
+    // 全屏图案为 0。RDX_FP_Y_OFFSET=0..1024。
+    let fp_y_offset: usize = std::env::var("RDX_FP_Y_OFFSET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| *v <= 1024)
+        .unwrap_or(0);
     // max_width 传 8192：不缩放，指纹几何按原生设备像素对齐。
     let mut capture = MacScreenCapturer::new(index, 8192, 60, origin)?;
 
@@ -54,9 +61,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(frame) => {
                 frames_total += 1;
                 let y_len = frame.width as usize * frame.height as usize;
-                if let Some(bits) = pattern::read_fingerprint(
+                if let Some(bits) = pattern::read_fingerprint_with_offset(
                     &frame.data[..y_len.min(frame.data.len())],
                     frame.width as usize,
+                    fp_y_offset,
                 ) {
                     observations.push((origin_unix + frame.timestamp_us, bits));
                 }
@@ -69,51 +77,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("capture diagnostics: {:?}", capture.diagnostics());
 
     let trace_text = std::fs::read_to_string(&trace_path)?;
-    let mut trace: Vec<(u64, u64)> = trace_text
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            match (parts.next()?, parts.next()?, parts.next()?) {
-                ("pattern-trace", frame, unix) => Some((frame.parse().ok()?, unix.parse().ok()?)),
-                _ => None,
-            }
-        })
-        .collect();
-    trace.sort_unstable_by_key(|(_, unix)| *unix);
+    let trace = pattern::parse_trace(&trace_text);
     if trace.is_empty() {
         return Err("no pattern-trace lines found".into());
     }
 
     // 只对“指纹变化”的观测配对：新内容到达时刻与该帧发布时刻之差。
     const MAX_DELAY_US: u64 = 2_000_000;
-    let mut delays = Samples::default();
     let mut transitions = 0u64;
-    let mut matched = 0u64;
-    let mut max_delay_ms = 0.0f32;
     let mut previous_bits = None;
-    let mut transition_times: Vec<u64> = Vec::new();
+    let mut fingerprint_transitions: Vec<(u64, u8)> = Vec::new();
     for (t_obs, bits) in &observations {
         if previous_bits == Some(*bits) {
             continue;
         }
         previous_bits = Some(*bits);
         transitions += 1;
-        transition_times.push(*t_obs);
-        let issue = trace
-            .iter()
-            .rev()
-            .find(|(frame, unix)| *unix <= *t_obs && (*frame & 0xff) == *bits as u64)
-            .map(|(_, unix)| *unix);
-        if let Some(unix) = issue {
-            let delay_us = t_obs.saturating_sub(unix);
-            if delay_us <= MAX_DELAY_US {
-                matched += 1;
-                let delay_ms = delay_us as f32 / 1000.0;
-                max_delay_ms = max_delay_ms.max(delay_ms);
-                delays.push(delay_ms);
-            }
-        }
+        fingerprint_transitions.push((*t_obs, *bits));
     }
+    let matched_delays = pattern::match_delays_ms(&trace, &fingerprint_transitions, MAX_DELAY_US);
+    let matched = matched_delays.len() as u64;
+    let max_delay_ms = matched_delays.iter().copied().fold(0.0f32, f32::max);
+    let mut delays = Samples::default();
+    for delay in matched_delays {
+        delays.push(delay);
+    }
+    let transition_times: Vec<u64> = fingerprint_transitions.iter().map(|(t, _)| *t).collect();
 
     // 相邻转场间隔 >1s 视为冻结段（含最小化/隐藏窗口、静止桌面）；
     // 末次转场到采样结束的尾段冻结也计入。

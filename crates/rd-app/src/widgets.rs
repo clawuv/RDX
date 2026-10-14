@@ -181,7 +181,7 @@ pub fn button_shaped(
         0.06,
     );
     if resp.hovered() && enabled {
-        ctx.set_cursor_icon(CursorIcon::PointingHand);
+        ctx.set_cursor_icon(CursorIcon::Default);
     }
     let painter = ui.painter();
     let r = rect.shrink(p * 0.6);
@@ -303,7 +303,7 @@ fn icon_button_ex(
         .ctx()
         .animate_bool_with_time(id.with("h"), resp.hovered() && enabled, 0.12);
     if resp.hovered() && enabled {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(CursorIcon::Default);
     }
     let painter = ui.painter();
     let c = rect.center();
@@ -331,7 +331,7 @@ pub fn toggle(ui: &mut Ui, rect: Rect, id: Id, value: &mut bool, theme: &Theme) 
         resp.mark_changed();
     }
     if resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(CursorIcon::Default);
     }
     let t = ui.ctx().animate_bool_with_time(id, *value, 0.16);
     let painter = ui.painter();
@@ -509,7 +509,7 @@ pub fn choice_card(
         .ctx()
         .animate_bool_with_time(id.with("s"), selected, 0.15);
     if resp.hovered() && enabled {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(CursorIcon::Default);
     }
     let painter = ui.painter();
     let fill = lerp_color(
@@ -573,7 +573,7 @@ pub fn checkbox(
         *value = !*value;
     }
     if resp.hovered() {
-        ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(CursorIcon::Default);
     }
     let t = ui.ctx().animate_bool_with_time(id, *value, 0.12);
     let painter = ui.painter();

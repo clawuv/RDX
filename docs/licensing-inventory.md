@@ -12,7 +12,7 @@
 | 内容 | 来源 / 已知声明 | 当前处理 |
 |---|---|---|
 | UI 绘制、主题、窗口辅助代码 | DCX / SquirrelDisk，AGPL-3.0-only 声明 | 与仓库许可一致；保留 REFERENCE-NOTICE.md 与原许可全文 |
-| Inter-Regular.ttf、Inter-SemiBold.ttf | 从 DCX 复制 | 需核对确切字体版本及上游许可，并附对应许可全文；当前来源说明不替代字体许可 |
+| Inter-Regular.ttf、Inter-SemiBold.ttf | 从 DCX 复制；TTF name 表核对为 Inter v4.001（git-66647c0bb） | 上游 rsms/inter 以 SIL OFL-1.1 授权（保留字体名 Inter），与仓库 AGPL 兼容（字体许可独立于代码许可）；文件未嵌入许可文本，发行打包须附 OFL-1.1 全文与署名 |
 | Rust 第三方依赖 | Cargo.lock 与各 crate 元数据 | cargo-deny 固定版本检查 licenses / bans / sources / advisories |
 | RDX 自有代码 | workspace crate 声明 AGPL-3.0-only（2026-10-14 起） | 随 LICENSE 一致；新文件按 AGPL 头部惯例处理由发行工程（P7）统一定 |
 
@@ -20,7 +20,7 @@
 
 CI 新增 dependencies 门槛，不使用 continue-on-error。许可证未知或工具报告错误时保持失败，不通过扩大白名单、忽略 workspace 或排除依赖掩盖问题。新增许可仅在核对具体包/版本与来源后采用定向例外。来源仅允许 crates.io；git 依赖须明确评审后再加入。
 
-尚待决定：字体对应版本许可及打包归档；clipboard-win / error-code 的 BSL-1.0、epaint 自带字体的 OFL-1.1 / Ubuntu-font 定向例外核对；ttf-parser 停维护告警的替换或裁剪处置。仓库发行许可已定 AGPL-3.0-only。
+尚待决定：发行打包归档与 OFL-1.1 全文随附；clipboard-win / error-code 的 BSL-1.0、epaint 自带字体的 OFL-1.1 / Ubuntu-font 定向例外核对；ttf-parser 停维护告警的替换或裁剪处置。仓库发行许可已定 AGPL-3.0-only，Inter 字体版本与许可已核对。
 
 ## 2026-10-14 实测结果
 

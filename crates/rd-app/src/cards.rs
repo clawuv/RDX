@@ -15,6 +15,7 @@ pub fn card_bg(ui: &Ui, rect: Rect, theme: &super::theme::Theme) {
     );
 }
 
+#[allow(clippy::too_many_arguments)] // 卡片几何/标识/文案/主题/预留宽度参数天然多
 pub fn source_card(
     ui: &mut Ui,
     rect: Rect,
@@ -23,13 +24,14 @@ pub fn source_card(
     title: &str,
     sub: &str,
     theme: &super::theme::Theme,
+    reserve_right: f32,
 ) -> egui::Response {
     let resp = ui.interact(rect, id, Sense::click());
     let h = ui
         .ctx()
         .animate_bool_with_time(id.with("h"), resp.hovered(), 0.15);
     if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     let p = ui.painter();
     let r = rect;
@@ -64,11 +66,21 @@ pub fn source_card(
     p.text(
         Pos2::new(r.left() + 56.0, r.center().y - 10.0),
         Align2::LEFT_CENTER,
-        widgets::truncate(p, title, &bold(14.0), r.width() - 68.0),
+        widgets::truncate(
+            p,
+            title,
+            &bold(14.0),
+            (r.width() - 68.0 - reserve_right).max(20.0),
+        ),
         bold(14.0),
         theme.text,
     );
-    let s = widgets::truncate(p, sub, &font(11.5), r.width() - 68.0);
+    let s = widgets::truncate(
+        p,
+        sub,
+        &font(11.5),
+        (r.width() - 68.0 - reserve_right).max(20.0),
+    );
     p.text(
         Pos2::new(r.left() + 56.0, r.center().y + 10.0),
         Align2::LEFT_CENTER,
