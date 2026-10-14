@@ -937,7 +937,7 @@ fn draw_icon_ex(p: &Painter, icon: Icon, r: Rect, c: Color32, stroke_mul: f32) {
         }
         Icon::Acorn => acorn(p, ctr, s, c, None),
         Icon::Panel => {
-            let outer = r.shrink(s * 0.14);
+            let outer = r.shrink2(Vec2::new(0.0, s * 0.14));
             p.rect_stroke(outer, cr(2.5), st, StrokeKind::Inside);
             let split = ctr.x - s * 0.1;
             p.line_segment(

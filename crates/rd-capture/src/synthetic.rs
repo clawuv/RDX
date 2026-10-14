@@ -139,7 +139,11 @@ impl SyntheticCapturer {
 
 fn next_deadline(previous: Instant, now: Instant, interval: Duration) -> Instant {
     let scheduled = previous + interval;
-    if scheduled <= now { now + interval } else { scheduled }
+    if scheduled <= now {
+        now + interval
+    } else {
+        scheduled
+    }
 }
 
 #[cfg(test)]

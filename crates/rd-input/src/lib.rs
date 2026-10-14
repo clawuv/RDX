@@ -1,5 +1,6 @@
 //! 输入注入 trait（ADR-0006）。P4 接入平台实现：
-//! Windows SendInput、macOS CGEvent（需辅助功能权限）、Linux uinput（Wayland）/ XTest（X11）。
+//! Windows SendInput、macOS CGEvent（需辅助功能权限）、Linux XTest（X11）。
+//! Wayland 优先 RemoteDesktop portal；uinput 不是通用绕过授权的方案。
 
 /// 平台无关键码：USB HID usage (keyboard page)。映射到各平台扫描码由注入端完成。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

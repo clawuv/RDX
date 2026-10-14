@@ -16,6 +16,8 @@ use widgets::{bold, cr, display, font, BtnStyle, Icon};
 
 pub(crate) const PAGE_PADDING_X: f32 = 48.0;
 pub(crate) const TOOLBAR_H: f32 = 36.0;
+const SIDEBAR_ITEM_LEFT: f32 = 12.0;
+const SIDEBAR_ICON_CENTER_X: f32 = 30.0;
 
 pub(crate) fn page_header_offset(sidebar: bool) -> f32 {
     if sidebar || cfg!(windows) {
@@ -209,7 +211,7 @@ impl eframe::App for App {
         let bx = if cfg!(target_os = "macos") {
             chrome_right + 28.0
         } else {
-            30.0
+            SIDEBAR_ICON_CENTER_X
         };
         let by = if cfg!(windows) {
             screen.top() + TOOLBAR_H / 2.0
@@ -262,7 +264,7 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
     // Align the first menu item's top edge with the content sheet's top edge.
     let menu_top = if cfg!(windows) { TOOLBAR_H + 8.0 } else { 58.0 };
     let item = Rect::from_min_size(
-        side.min + Vec2::new(12.0, menu_top),
+        side.min + Vec2::new(SIDEBAR_ITEM_LEFT, menu_top),
         Vec2::new(side.width() - 16.0, 36.0),
     );
     let mut selected = None;
@@ -297,7 +299,10 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
     );
     if nav_item(
         ui,
-        Rect::from_min_size(Pos2::new(side.left() + 12.0, y + 22.0), item.size()),
+        Rect::from_min_size(
+            Pos2::new(side.left() + SIDEBAR_ITEM_LEFT, y + 22.0),
+            item.size(),
+        ),
         Id::new("nav-device"),
         Icon::Disk,
         "RDX 本机",
@@ -313,7 +318,7 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
     if nav_item(
         ui,
         Rect::from_min_size(
-            Pos2::new(side.left() + 12.0, side.bottom() - 44.0),
+            Pos2::new(side.left() + SIDEBAR_ITEM_LEFT, side.bottom() - 44.0),
             item.size(),
         ),
         Id::new("nav-settings"),
@@ -745,15 +750,23 @@ fn nav_item(
     } else {
         theme::lerp_color(theme.text_dim, theme.text, hov)
     };
-    let mut tx = rect.left() + 14.0;
-    // icon sized to the 13px label so both read as one line
+    // Share the toolbar's icon axis; preserve the existing icon-to-label gap.
+    let icon_x = rect.left() + SIDEBAR_ICON_CENTER_X - SIDEBAR_ITEM_LEFT;
+    // Match the gear's visible extent, accounting for each glyph's inner padding.
+    // Keep wide glyphs proportional rather than stretching them into squares.
+    let icon_size = match icon {
+        Icon::Monitor => 18.0,
+        Icon::Server => 17.0,
+        Icon::Grid => 15.75,
+        _ => 16.0,
+    };
     widgets::draw_icon(
         &p,
         icon,
-        Rect::from_center_size(Pos2::new(tx + 9.0, rect.center().y), Vec2::splat(16.0)),
+        Rect::from_center_size(Pos2::new(icon_x, rect.center().y), Vec2::splat(icon_size)),
         col,
     );
-    tx += 34.0;
+    let tx = icon_x + 25.0;
     let max_w = rect.right() - tx - if closeable { 34.0 } else { 12.0 };
     let lbl = widgets::truncate(&p, label, &bold(13.0), max_w);
     // -0.5: half-step optical lift; CJK ink hangs slightly low in the line box

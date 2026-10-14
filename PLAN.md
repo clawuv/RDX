@@ -1,7 +1,7 @@
 # RDX 实施计划
 
 - 状态：执行中（P1 合成视频链路验证；尚未验收）
-- 2026-10-14 Windows 复核：P0 工程骨架具备，三平台 CI 与安全/平台能力评审仍待确认，不能标记 P0 全部完成。
+- 2026-10-14 P0 补齐：本机 25 项测试、严格 clippy 与三核心 crate wasm 编译通过；已补 CI 依赖审查及平台/认证范围文档。cargo-deny 的 bans/sources 通过，licenses/advisories 失败；当前提交三平台 CI、安全评审及许可决策仍待完成，详见 docs/p0-audit-2026-10-14.md。
 - P1：合成捕获、H.264 软编软解、GPU I420 上传与渲染已实现；真实 DXGI / ScreenCaptureKit / X11 捕获、硬编互操作、真实上屏延迟测量与录屏未完成。
 - 历史 720p Mac 数据仅保留为早期观察：发现捕获器与 UI 时间戳起点不同，且测量截止点是上传提交而非呈现，因此不再用于 <50ms 端到端验收。
 - 本轮开发：修复时钟起点、解码分段计时、无界视频队列及 clippy；回环提升至 1920×1080@30、8Mbps，继续留在 P1。
@@ -32,7 +32,7 @@ rd/  （实际目录名 RDX）
 │   ├── rd-capture/         # 捕获 trait；dxgi / x11+damage / pipewire / screencapturekit
 │   ├── rd-input/           # 注入 trait；SendInput / CGEvent / uinput+XTest
 │   ├── rd-engine/          # 会话 actor、状态机、QoS、权限（纯逻辑，headless 可测）
-│   ├── rd-crypto/          # opaque-ke 认证 + snow(Noise) 会话加密
+│   ├── rd-crypto/          # MVP 设备配对 + Noise（待评审）；OPAQUE 后续
 │   ├── rd-broker/          # 特权能力代理：daemon + IPC + 安装器
 │   ├── rd-audio/           # cpal 采集/播放 + opus
 │   ├── rd-app/             # egui 应用（唯一二进制）
