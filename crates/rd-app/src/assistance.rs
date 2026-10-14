@@ -30,7 +30,7 @@ impl Default for Assistance {
 impl Assistance {
     pub fn show(&mut self, ui: &mut egui::Ui, content: Rect, theme: &Theme, sidebar: bool) {
         let x = content.left() + crate::PAGE_PADDING_X;
-        let top = content.top() + if sidebar { 22.0 } else { 48.0 };
+        let top = content.top() + crate::page_header_offset(sidebar);
         ui.painter().text(
             Pos2::new(x, top),
             Align2::LEFT_TOP,

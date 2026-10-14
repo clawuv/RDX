@@ -2571,6 +2571,7 @@ dependencies = [
  "rd-codec",
  "tokio",
  "wgpu",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

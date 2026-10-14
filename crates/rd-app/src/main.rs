@@ -1,4 +1,6 @@
 //! RDX placeholder dashboard adapted from SquirrelDisk / DCX (AGPL-3.0-only).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod assistance;
 mod cards;
 #[cfg(target_os = "macos")]
@@ -6,11 +8,22 @@ mod macos;
 mod settings;
 mod theme;
 mod widgets;
+#[cfg(windows)]
+mod win;
 use eframe::egui::{self, Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Vec2};
 use theme::{with_alpha, Theme};
 use widgets::{bold, cr, display, font, BtnStyle, Icon};
 
 pub(crate) const PAGE_PADDING_X: f32 = 48.0;
+pub(crate) const TOOLBAR_H: f32 = 36.0;
+
+pub(crate) fn page_header_offset(sidebar: bool) -> f32 {
+    if sidebar || cfg!(windows) {
+        22.0
+    } else {
+        48.0
+    }
+}
 
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
@@ -22,16 +35,19 @@ fn main() -> eframe::Result<()> {
         .with_fullsize_content_view(true)
         .with_titlebar_shown(false)
         .with_title_shown(false);
+    #[cfg(windows)]
+    let viewport = viewport.with_decorations(false);
     eframe::run_native(
         "RDX",
         eframe::NativeOptions {
             viewport,
+            wgpu_options: rd_app::wgpu_configuration(),
             persist_window: false,
             ..Default::default()
         },
         Box::new(|cc| {
             install_fonts(&cc.egui_ctx);
-            cc.egui_ctx.set_visuals(egui::Visuals::light());
+            cc.egui_ctx.set_theme(egui::ThemePreference::System);
             Ok(Box::new(App {
                 theme: theme::mist(),
                 sidebar: true,
@@ -115,6 +131,8 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.settings.apply_theme(&ctx, &mut self.theme);
+        ui.set_style(ctx.global_style());
         #[allow(unused_mut)]
         let mut chrome_right = 68.0;
         #[cfg(target_os = "macos")]
@@ -132,6 +150,8 @@ impl eframe::App for App {
                 chrome_right = right;
             }
         }
+        #[cfg(windows)]
+        win::install_resize_frame(frame);
         let _ = frame;
         let screen = ctx.content_rect();
         let tint = if self.vibrancy {
@@ -151,7 +171,10 @@ impl eframe::App for App {
             );
         }
         let drag = ui.interact(
-            Rect::from_min_size(screen.min, Vec2::new(screen.width(), 72.0)),
+            Rect::from_min_size(
+                screen.min,
+                Vec2::new(screen.width(), if cfg!(windows) { TOOLBAR_H } else { 72.0 }),
+            ),
             Id::new("window-drag"),
             Sense::click_and_drag(),
         );
@@ -174,7 +197,10 @@ impl eframe::App for App {
             }
         }
         let content = Rect::from_min_max(
-            Pos2::new(screen.left() + width + 8.0, screen.top() + 8.0),
+            Pos2::new(
+                screen.left() + width + 8.0,
+                screen.top() + if cfg!(windows) { TOOLBAR_H + 8.0 } else { 8.0 },
+            ),
             screen.max - Vec2::splat(8.0),
         );
         widgets::shadow(ui.painter(), content, 16.0, 0.45, &self.theme);
@@ -185,7 +211,12 @@ impl eframe::App for App {
         } else {
             30.0
         };
-        let toggle = Rect::from_center_size(Pos2::new(bx, content.top() + 16.0), Vec2::splat(28.0));
+        let by = if cfg!(windows) {
+            screen.top() + TOOLBAR_H / 2.0
+        } else {
+            content.top() + 16.0
+        };
+        let toggle = Rect::from_center_size(Pos2::new(screen.left() + bx, by), Vec2::splat(28.0));
         if widgets::icon_button_bold(
             ui,
             toggle,
@@ -194,6 +225,11 @@ impl eframe::App for App {
             &self.theme,
             true,
         )
+        .on_hover_text(if self.sidebar {
+            "收起侧栏"
+        } else {
+            "展开侧栏"
+        })
         .clicked()
         {
             self.sidebar = !self.sidebar;
@@ -201,11 +237,14 @@ impl eframe::App for App {
         widgets::icon_button_bold(
             ui,
             toggle.translate(Vec2::new(34.0, 0.0)),
-            Id::new("new-device"),
-            Icon::Plus,
+            Id::new("notifications"),
+            Icon::Bell,
             &self.theme,
             true,
-        );
+        )
+        .on_hover_text("通知");
+        #[cfg(windows)]
+        win::caption_buttons(ui, screen, &self.theme);
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
             ui.set_clip_rect(content);
             match self.page {
@@ -220,13 +259,15 @@ impl eframe::App for App {
     }
 }
 fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> Option<Page> {
+    // Align the first menu item's top edge with the content sheet's top edge.
+    let menu_top = if cfg!(windows) { TOOLBAR_H + 8.0 } else { 58.0 };
     let item = Rect::from_min_size(
-        side.min + Vec2::new(12.0, 58.0),
+        side.min + Vec2::new(12.0, menu_top),
         Vec2::new(side.width() - 16.0, 36.0),
     );
     let mut selected = None;
     for (index, page, icon, label) in [
-        (0, Page::Assistance, Icon::Panel, "远程协助"),
+        (0, Page::Assistance, Icon::Monitor, "远程协助"),
         (1, Page::Devices, Icon::Server, "设备"),
         (2, Page::Tools, Icon::Grid, "工具"),
     ] {
@@ -252,7 +293,7 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
         Align2::LEFT_TOP,
         "最近设备",
         bold(12.5),
-        with_alpha(Color32::BLACK, 0.55),
+        theme.text_dim,
     );
     if nav_item(
         ui,
@@ -293,7 +334,7 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
 impl App {
     fn devices_page(&mut self, ui: &mut egui::Ui, content: Rect) {
         let t = &self.theme;
-        let header = if self.sidebar { 22.0 } else { 48.0 };
+        let header = page_header_offset(self.sidebar);
         let (x, w) = (
             content.left() + PAGE_PADDING_X,
             content.width() - PAGE_PADDING_X * 2.0,
@@ -495,7 +536,7 @@ impl App {
     }
     fn tools_page(&mut self, ui: &mut egui::Ui, content: Rect) {
         let t = &self.theme;
-        let header = if self.sidebar { 22.0 } else { 48.0 };
+        let header = page_header_offset(self.sidebar);
         let banner_top = content.bottom() - 16.0 - 52.0;
         let scroll_area =
             Rect::from_min_max(content.min, Pos2::new(content.right(), banner_top - 16.0));

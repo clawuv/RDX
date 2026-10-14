@@ -18,7 +18,6 @@ pub fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("bold".into()))
 }
 /// Brand wordmark font; only the sidebar brand row (not on Windows) uses it.
-#[cfg_attr(windows, allow(dead_code))]
 #[allow(dead_code)] // kept for the home header / future branding
 pub fn brand(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("brand".into()))
@@ -688,6 +687,10 @@ pub enum Icon {
     Pencil,
     /// Sidebar toggle: a panel with a highlighted left column.
     Panel,
+    /// Desktop display for remote assistance.
+    Monitor,
+    /// Notification bell.
+    Bell,
     /// 2×2 tile grid, for the dashboard entry.
     Grid,
 }
@@ -703,6 +706,35 @@ fn draw_icon_ex(p: &Painter, icon: Icon, r: Rect, c: Color32, stroke_mul: f32) {
     let ctr = r.center();
     let at = |x: f32, y: f32| Pos2::new(ctr.x + x * s / 2.0, ctr.y + y * s / 2.0);
     match icon {
+        Icon::Bell => {
+            p.line(
+                vec![
+                    at(-0.65, 0.4),
+                    at(-0.48, 0.16),
+                    at(-0.45, -0.3),
+                    at(-0.32, -0.55),
+                    at(0.0, -0.65),
+                    at(0.32, -0.55),
+                    at(0.45, -0.3),
+                    at(0.48, 0.16),
+                    at(0.65, 0.4),
+                    at(-0.65, 0.4),
+                ],
+                st,
+            );
+            p.line_segment([at(0.0, -0.65), at(0.0, -0.82)], st);
+            p.line(vec![at(-0.18, 0.64), at(0.0, 0.74), at(0.18, 0.64)], st);
+        }
+        Icon::Monitor => {
+            p.rect_stroke(
+                Rect::from_min_max(at(-0.8, -0.65), at(0.8, 0.35)),
+                cr(2.0),
+                st,
+                egui::StrokeKind::Inside,
+            );
+            p.line_segment([at(0.0, 0.35), at(0.0, 0.75)], st);
+            p.line_segment([at(-0.4, 0.75), at(0.4, 0.75)], st);
+        }
         Icon::Back => {
             p.line(vec![at(0.25, -0.6), at(-0.35, 0.0), at(0.25, 0.6)], st);
         }

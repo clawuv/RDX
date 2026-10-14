@@ -35,3 +35,13 @@ rd-codec = { path = "crates/rd-codec" }
 rd-input = { path = "crates/rd-input" }
 rd-engine = { path = "crates/rd-engine" }
 rd-crypto = { path = "crates/rd-crypto" }
+
+# Match DCX's release and dependency optimization settings.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2

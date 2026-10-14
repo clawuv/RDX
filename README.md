@@ -7,15 +7,35 @@
 
 ## 状态
 
-P0（骨架）。当前包含 workspace、核心 trait、裸帧格式（含测试）、会话状态机（含测试）、最小 egui 应用。
+P1 进行中：已实现合成视频回环（H.264 软编软解 + GPU YUV 渲染）与桌面 UI。真实屏幕捕获、传输和认证仍未完成；P0 跨平台与安全评审门槛尚未全部验收。详见 PLAN.md 和 docs/validation-2026-10-14.md。
 
 ## 构建
+
+工具链与 DCX 一致，固定为 Rust/Cargo 1.95；通过 rustup 安装 Rust 后，
+在项目目录运行普通 `cargo` 命令即可自动选择，无需额外指定 `+1.95`。
+Windows 使用 MSVC 工具链，需要安装 Visual Studio C++ Build Tools 和 Windows SDK。
 
 ```sh
 cargo build --workspace
 cargo test --workspace
 cargo run -p rd-app
 ```
+
+正式构建与 DCX 使用相同优化：`opt-level = 3`、fat LTO、单个 codegen unit、strip；
+开发构建的第三方依赖使用 `opt-level = 2`。
+
+```sh
+cargo build --workspace --release
+cargo run -p rd-app --release
+```
+
+Windows GUI 产物为 `target/release/rd-app.exe`，正式版本不弹出控制台窗口。
+`rd-loop` 调试工具仍保留控制台，可用 `cargo run -p rd-app --bin rd-loop` 运行。
+CI 同样固定使用 1.95；wasm 目标由对应 CI 作业安装。
+
+Windows 的主界面和 `rd-loop` 默认使用 wgpu/DX12，避免部分旧版 Intel Vulkan
+驱动在启动时发生访问冲突。无需设置环境变量；调试时仍可通过 `WGPU_BACKEND`
+显式选择其他后端。
 
 ## Crate 一览
 

@@ -10,10 +10,11 @@ use std::time::Duration;
 use rd_app::pipeline::{self, LoopFrame, PipelineConfig};
 use rd_app::stats::Samples;
 use rd_app::video::{VideoShared, YuvPaintCallback};
-use std::sync::mpsc::Receiver;
+use tokio::sync::watch;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
+        wgpu_options: rd_app::wgpu_configuration(),
         viewport: egui::ViewportBuilder::default()
             .with_title("RDX — P1 回环")
             .with_inner_size([980.0, 640.0]),
@@ -30,7 +31,7 @@ fn main() -> eframe::Result<()> {
 }
 
 struct LoopApp {
-    receiver: Receiver<LoopFrame>,
+    receiver: watch::Receiver<Option<LoopFrame>>,
     shared: Option<Arc<VideoShared>>,
     pending: Option<LoopFrame>,
     e2e_ms: Samples,
@@ -43,10 +44,10 @@ impl LoopApp {
     fn new(ctx: egui::Context, shared: Option<Arc<VideoShared>>) -> Self {
         let receiver = pipeline::spawn(
             PipelineConfig {
-                width: 1280,
-                height: 720,
+                width: 1920,
+                height: 1080,
                 framerate: 30,
-                bitrate_kbps: 4000,
+                bitrate_kbps: 8000,
             },
             ctx,
         );
@@ -63,11 +64,9 @@ impl LoopApp {
 
     fn drain_pipeline(&mut self) {
         // 只保留最新帧：UI 慢于管道时直接丢弃过帧，不排队放大延迟。
-        let mut latest = self.pending.take();
-        while let Ok(frame) = self.receiver.try_recv() {
-            latest = Some(frame);
+        if self.receiver.has_changed().unwrap_or(false) {
+            self.pending = self.receiver.borrow_and_update().clone();
         }
-        self.pending = latest;
     }
 
     fn upload_latest(&mut self) {
@@ -89,7 +88,7 @@ impl LoopApp {
             self.second_start_us = now;
             // 与管道侧同节奏的呈现侧汇总，供无头验证。
             eprintln!(
-                "rdx display: fps={:.1} e2e p50/p95={:.1}/{:.1} ms",
+                "rdx upload: fps={:.1} capture_to_upload_submit p50/p95={:.1}/{:.1} ms",
                 self.display_fps,
                 self.e2e_ms.percentile(0.5),
                 self.e2e_ms.percentile(0.95),
@@ -118,7 +117,7 @@ impl eframe::App for LoopApp {
                 ui.label(format!("display {:.0} fps", self.display_fps));
                 ui.separator();
                 ui.label(format!(
-                    "e2e p50/p95 {:.1}/{:.1} ms (n={})",
+                    "capture → upload submit p50/p95 {:.1}/{:.1} ms (n={})",
                     self.e2e_ms.percentile(0.5),
                     self.e2e_ms.percentile(0.95),
                     self.e2e_ms.len()

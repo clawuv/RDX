@@ -179,6 +179,25 @@ pub fn mist() -> Theme {
     theme
 }
 
+/// Neutral dark counterpart to Mist.
+pub fn mist_dark() -> Theme {
+    let mut t = mist();
+    t.name = "Mist Dark";
+    t.dark = true;
+    t.bg_top = c(36, 37, 41);
+    t.bg_bottom = c(24, 25, 28);
+    t.surface = c(43, 45, 50);
+    t.surface_hi = c(55, 57, 64);
+    t.stroke = c(67, 70, 78);
+    t.text = c(240, 241, 244);
+    t.text_dim = c(180, 183, 193);
+    t.text_faint = c(152, 156, 168);
+    t.accent = c(131, 157, 232);
+    t.accent2 = c(163, 181, 239);
+    t.neutral = c(87, 91, 101);
+    t
+}
+
 pub fn by_name(name: &str) -> Theme {
     let v = all();
     v.iter()
