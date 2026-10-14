@@ -12,7 +12,7 @@ mod widgets;
 mod win;
 use eframe::egui::{self, Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Vec2};
 use theme::{with_alpha, Theme};
-use widgets::{bold, cr, display, font, BtnStyle, Icon};
+use widgets::{bold, cr, display, font, menu, BtnStyle, Icon};
 
 pub(crate) const PAGE_PADDING_X: f32 = 48.0;
 pub(crate) const TOOLBAR_H: f32 = 36.0;
@@ -29,7 +29,7 @@ pub(crate) fn page_header_offset(sidebar: bool) -> f32 {
 
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1086.0, 813.0])
+        .with_inner_size([860.0, 560.0])
         .with_min_inner_size([860.0, 560.0]);
     #[cfg(target_os = "macos")]
     let viewport = viewport
@@ -96,6 +96,21 @@ fn install_fonts(ctx: &egui::Context) {
             break;
         }
     }
+    // Bold CJK companion; without it "bold"-family CJK labels (menus) fall
+    // through to the regular-weight fallback above.
+    let mut cjk_bold = false;
+    for path in [
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert("cjk-bold".into(), Arc::new(FontData::from_owned(bytes)));
+            cjk_bold = true;
+            break;
+        }
+    }
     for (family, first) in [
         (FontFamily::Proportional, "inter"),
         (FontFamily::Name("bold".into()), "inter-bold"),
@@ -105,6 +120,16 @@ fn install_fonts(ctx: &egui::Context) {
         names.extend(fallback.clone());
         fonts.families.insert(family, names);
     }
+    // Sidebar menu family: Latin goes inter-bold, CJK goes to the bold
+    // fallback when available, then the regular one.
+    let mut menu_family = vec!["inter-bold".into()];
+    if cjk_bold {
+        menu_family.push("cjk-bold".into());
+    }
+    menu_family.extend(fallback.clone());
+    fonts
+        .families
+        .insert(FontFamily::Name("menu".into()), menu_family);
     ctx.set_fonts(fonts);
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -294,7 +319,7 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
         Pos2::new(side.left() + 24.0, y),
         Align2::LEFT_TOP,
         "最近设备",
-        bold(12.5),
+        menu(13.5),
         theme.text_dim,
     );
     if nav_item(
@@ -768,13 +793,14 @@ fn nav_item(
     );
     let tx = icon_x + 25.0;
     let max_w = rect.right() - tx - if closeable { 34.0 } else { 12.0 };
-    let lbl = widgets::truncate(&p, label, &bold(13.0), max_w);
-    // -0.5: half-step optical lift; CJK ink hangs slightly low in the line box
+    let lbl = widgets::truncate(&p, label, &menu(14.0), max_w);
+    // YaHei Bold ink hangs low in its (large) line box; lift the text so the
+    // visual mass centers on the icon axis.
     p.text(
-        Pos2::new(tx, rect.center().y + 1.0),
+        Pos2::new(tx, rect.center().y - 2.0),
         Align2::LEFT_CENTER,
         lbl,
-        bold(13.0),
+        menu(14.0),
         col,
     );
     let mut close = false;

@@ -17,6 +17,11 @@ pub fn font(size: f32) -> FontId {
 pub fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("bold".into()))
 }
+/// Sidebar menu labels: same weight as [`bold`] for Latin, plus a registered
+/// bold CJK fallback (family "menu") so Chinese items render truly bold.
+pub fn menu(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("menu".into()))
+}
 /// Brand wordmark font; only the sidebar brand row (not on Windows) uses it.
 #[allow(dead_code)] // kept for the home header / future branding
 pub fn brand(size: f32) -> FontId {

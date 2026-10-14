@@ -164,7 +164,7 @@ impl Assistance {
                         theme.text_faint,
                     );
                     p.text(
-                        Pos2::new(x, y + 138.0),
+                        Pos2::new(x, y + 148.0),
                         Align2::LEFT_CENTER,
                         "远程协助他人",
                         bold(18.0),
