@@ -614,7 +614,31 @@ impl App {
             Rect::from_min_max(content.min, Pos2::new(content.right(), banner_top - 16.0));
         let original_clip = ui.clip_rect();
         ui.set_clip_rect(original_clip.intersect(scroll_area));
-        let content_h = header + 44.0 + 2.0 * (28.0 + 84.0);
+        #[allow(clippy::type_complexity)] // 静态页数据表，展开成类型别名反而绕
+        let groups: [(&str, &[(Icon, &str, &str)]); 3] = [
+            (
+                "推荐工具",
+                &[
+                    (Icon::Monitor, "TMX", "SSH 终端工具"),
+                    (Icon::Disk, "DBX", "数据库管理"),
+                ],
+            ),
+            (
+                "远程访问",
+                &[
+                    (Icon::Server, "远程设备", "查看设备并建立远程会话"),
+                    (Icon::Cloud, "Web 控制台", "浏览器控制端（规划中）"),
+                ],
+            ),
+            (
+                "图像设计",
+                &[
+                    (Icon::Eye, "PhotoCraft", "AI 图像设计助手"),
+                    (Icon::Pencil, "OpenPencil", "原型设计软件"),
+                ],
+            ),
+        ];
+        let content_h = header + 44.0 + groups.len() as f32 * (28.0 + 84.0);
         let max_scroll = (content_h - scroll_area.height()).max(0.0);
         if ui.rect_contains_pointer(scroll_area) {
             self.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
@@ -649,20 +673,6 @@ impl App {
         }
         y += 44.0;
         let cw = (w - 12.0) / 2.0;
-        #[allow(clippy::type_complexity)] // 静态页数据表，展开成类型别名反而绕
-        let groups: [(&str, &[(Icon, &str, &str)]); 2] = [
-            (
-                "本机工具",
-                &[(Icon::Folder, "本机桌面", "此 Mac 当前的共享桌面")],
-            ),
-            (
-                "远程访问",
-                &[
-                    (Icon::Server, "远程设备", "查看设备并建立远程会话"),
-                    (Icon::Cloud, "Web 控制台", "浏览器控制端（规划中）"),
-                ],
-            ),
-        ];
         let mut open_devices = false;
         for (group_index, (label, tools)) in groups.into_iter().enumerate() {
             ui.painter().text(

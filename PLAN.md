@@ -1,6 +1,7 @@
 # RDX 实施计划
 
 - 状态：执行中（P1 合成视频链路验证；尚未验收）
+- rd-loop 前台/遮挡/隐藏对比：新增 `RDX_LOOP_HIDE_AFTER`，单轮 24 秒取得三状态数据——前台 draw 60/s·unique_draw 30/s；被完全遮挡时 logic 仍 60/s 但 draw=0、superseded≈30/s（上传照常、绘制回调不执行）；隐藏后 logic/upload 节流至 8.8/s。管道线程全程 30fps 不受 UI 状态影响。50ms 预算分段判定依据已写入文档：CPU 管道 p95≈11.5ms 余量充足，风险在合成/呈现链（本地窗口发布→可见≈51ms）；维持"捕获→上屏"定义则预算高风险，收紧为"捕获→GPU 完成"（p95≈47ms 含调度上界）则逼近达标——需决策，建议先做回环端到端指纹观测再定。详见 docs/p1-macos-2026-10-14.md。
 - 呈现观测：pattern_window 新增逐帧 trace 与帧号低 8 位指纹角标（rd-app/src/pattern.rs 绘制/读取共用几何，含单测），新增 present_probe 探针用 SCK 捕获读回指纹并与 trace 对齐，首次测得“图案帧发布→被显示器内容捕获观察到”前台 p50/p95≈50/58ms（debug 与 release 一致；release 下回调内转换 0.45ms/帧，~50ms 主要来自呈现/合成/显示刷新/SCStream 交付链，为观测上界而非呈现回调）；`Visible(false)` 隐藏后检出 ~11s 冻结段，macOS 全屏窗口对 Minimized 命令无响应。本地窗口发布→可见已 ≈3 个 60Hz 刷新周期，P1 的 50ms 预算需先明确测量点定义再判定；rd-loop 遮挡对比待做，详见 docs/p1-macos-2026-10-14.md。
 - 发行许可定为 AGPL-3.0-only：LICENSE、11 个 workspace crate 元数据与 deny.toml 白名单同步，化解 MIT LICENSE 与 AGPL 派生 UI 并存的冲突；字体许可与第三方定向例外（BSL/OFL）仍待核对，见 docs/licensing-inventory.md。
 - 受控动态素材与 GPU 完成测量：新增 pattern_window 示例（帧序号驱动的棋盘/白条/帧号图案，按截止时间推进节拍，全屏于被采显示器即得可复现素材）；video.rs 接入 on_submitted_work_done 队列清空回调并输出 register→fire 与 capture→gpu_done p50/p95（不含本帧绘制与呈现）。合成源与 pattern 全屏真屏各一组限时实测：真屏 capture→upload p50/p95=10.35/11.53ms、capture→gpu_done p50/p95=44.75/48.39ms，GPU 队列未见持续积压；呈现测量与前台/遮挡对比仍未完成，不据此宣布 <50ms，详见 docs/p1-macos-2026-10-14.md。

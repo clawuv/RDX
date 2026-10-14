@@ -27,6 +27,20 @@ fn main() -> eframe::Result<()> {
             return Ok(());
         }
     };
+    let hide_after = match std::env::var("RDX_LOOP_HIDE_AFTER") {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(seconds @ 1..=120) => Some(Duration::from_secs(seconds)),
+            _ => {
+                eprintln!("RDX_LOOP_HIDE_AFTER must be 1..120");
+                return Ok(());
+            }
+        },
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => {
+            eprintln!("invalid RDX_LOOP_HIDE_AFTER");
+            return Ok(());
+        }
+    };
     let options = eframe::NativeOptions {
         wgpu_options: rd_app::wgpu_configuration(),
         viewport: egui::ViewportBuilder::default()
@@ -41,6 +55,7 @@ fn main() -> eframe::Result<()> {
             let shared = cc.wgpu_render_state.as_ref().map(VideoShared::new);
             let mut app = LoopApp::new(cc.egui_ctx.clone(), shared);
             app.duration = duration;
+            app.hide_after = hide_after;
             Ok(Box::new(app))
         }),
     )
@@ -49,6 +64,8 @@ fn main() -> eframe::Result<()> {
 struct LoopApp {
     started: Instant,
     duration: Option<Duration>,
+    hide_after: Option<Duration>,
+    hidden: bool,
     summary_reported: bool,
     pipeline_stopped: bool,
     receiver: watch::Receiver<Option<LoopFrame>>,
@@ -77,6 +94,8 @@ impl LoopApp {
         Self {
             started: Instant::now(),
             duration: None,
+            hide_after: None,
+            hidden: false,
             summary_reported: false,
             pipeline_stopped: false,
             receiver,
@@ -185,6 +204,18 @@ impl eframe::App for LoopApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
+        if !self.hidden
+            && self
+                .hide_after
+                .is_some_and(|delay| self.started.elapsed() >= delay)
+        {
+            self.hidden = true;
+            eprintln!(
+                "rdx: window hidden at {:.2}s",
+                self.started.elapsed().as_secs_f64()
+            );
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
         self.logic_ticks += 1;
         self.drain_pipeline();
         self.upload_latest();
@@ -249,6 +280,8 @@ mod acceptance_tests {
         LoopApp {
             started: Instant::now(),
             duration: None,
+            hide_after: None,
+            hidden: false,
             summary_reported: false,
             pipeline_stopped: false,
             receiver,
