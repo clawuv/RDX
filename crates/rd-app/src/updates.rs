@@ -4,7 +4,7 @@ use crate::{
     theme::Theme,
     widgets::{self, Icon},
 };
-use eframe::egui::{self, Color32, Id, Rect, RichText, Stroke};
+use eframe::egui::{self, Color32, Id, Pos2, Rect, RichText, Stroke, Vec2};
 use std::{
     sync::mpsc::{self, Receiver},
     time::Duration,
@@ -131,8 +131,8 @@ impl Updates {
             .anchor(footer)
             .align(egui::emath::RectAlign::TOP_START)
             .align_alternatives(&[])
-            .gap(6.0)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .gap(12.0)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
             .width(footer.width())
             .frame(
                 egui::Frame::popup(ui.style())
@@ -145,7 +145,24 @@ impl Updates {
                 // Keep the complete frame inside the sidebar, including padding.
                 ui.set_width((footer.width() - 26.0).max(80.0));
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                ui.label(RichText::new("软件更新").color(theme.text));
+                ui.horizontal_top(|ui| {
+                    let title = ui.label(RichText::new("软件更新").color(theme.text));
+                    let close = Rect::from_center_size(
+                        Pos2::new(ui.max_rect().right() - 11.0, title.rect.center().y),
+                        Vec2::splat(22.0),
+                    );
+                    let btn = widgets::icon_button(
+                        ui,
+                        close,
+                        Id::new("update-close"),
+                        Icon::Close,
+                        theme,
+                        true,
+                    );
+                    if btn.clicked() {
+                        ui.close();
+                    }
+                });
                 ui.label(
                     RichText::new(format!("当前版本 {}", env!("CARGO_PKG_VERSION")))
                         .color(theme.text_dim),

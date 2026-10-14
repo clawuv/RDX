@@ -115,10 +115,23 @@ fn convert_nv12_to_i420(guard: &CVPixelBufferLockGuard<'_>, origin: Instant) -> 
 /// SCStream implements Send in the upstream binding; no local unsafe assertion.
 struct StreamHandle(SCStream);
 
+fn matching_display(ids: &[u32], wanted: u32) -> Result<usize, CaptureError> {
+    let mut matches = ids.iter().enumerate().filter(|(_, id)| **id == wanted);
+    let index = matches.next().ok_or(CaptureError::DisplayChanged)?.0;
+    if matches.next().is_some() {
+        return Err(CaptureError::DisplayChanged);
+    }
+    Ok(index)
+}
+
 pub struct MacScreenCapturer {
     info: CaptureInfo,
     receiver: watch::Receiver<Option<RawFrame>>,
     stream: Option<StreamHandle>,
+    display_id: u32,
+    max_width: u32,
+    origin: Instant,
+    failure: watch::Receiver<Option<String>>,
 }
 
 impl MacScreenCapturer {
@@ -151,6 +164,16 @@ impl MacScreenCapturer {
                         + "在 系统设置 → 隐私与安全性 → 屏幕录制 中允许本应用后重启）",
                 )
             })?;
+        Self::for_display(display, max_width, framerate, origin)
+    }
+
+    fn for_display(
+        display: screencapturekit::shareable_content::SCDisplay,
+        max_width: u32,
+        framerate: u32,
+        origin: Instant,
+    ) -> Result<Self, CaptureError> {
+        let display_id = display.display_id();
         let (dw, dh) = (display.width(), display.height());
         let scale = (max_width as f32 / dw.max(1) as f32).min(1.0);
         let w = ((dw as f32 * scale) as u32) & !1;
@@ -172,8 +195,12 @@ impl MacScreenCapturer {
             .with_pixel_format(SckPixelFormat::YCbCr_420v)
             .with_shows_cursor(true)
             .with_minimum_frame_interval(&screencapturekit::cm::CMTime::new(1, framerate as i32));
-        let mut stream =
-            SCStream::new(&filter, &config).map_err(|e| CaptureError::Other(e.into()))?;
+        let (failure_tx, failure) = watch::channel(None);
+        let delegate = screencapturekit::stream::delegate_trait::ErrorHandler::new(move |error| {
+            failure_tx.send_replace(Some(format!("ScreenCaptureKit stopped: {error}")));
+        });
+        let mut stream = SCStream::new_with_delegate(&filter, &config, delegate)
+            .map_err(|e| CaptureError::Other(e.into()))?;
 
         let (tx, rx) = watch::channel(None);
         stream
@@ -195,6 +222,10 @@ impl MacScreenCapturer {
             },
             receiver: rx,
             stream: Some(StreamHandle(stream)),
+            display_id,
+            max_width,
+            origin,
+            failure,
         })
     }
 }
@@ -205,7 +236,39 @@ impl Capturer for MacScreenCapturer {
         &self.info
     }
 
+    fn recover(&mut self) -> Result<(), CaptureError> {
+        // Release the invalid stream before creating another; never select by the old index.
+        if let Some(handle) = self.stream.take() {
+            handle
+                .0
+                .stop_capture()
+                .map_err(|e| CaptureError::Unavailable(format!("stop_capture: {e}")))?;
+        }
+        let content = SCShareableContent::get()
+            .map_err(|e| CaptureError::Unavailable(format!("display enumeration: {e}")))?;
+        let displays = content.displays();
+        let ids: Vec<_> = displays
+            .iter()
+            .map(|display| display.display_id())
+            .collect();
+        let index = matching_display(&ids, self.display_id)?;
+        let display = displays
+            .into_iter()
+            .nth(index)
+            .ok_or(CaptureError::DisplayChanged)?;
+        *self = Self::for_display(
+            display,
+            self.max_width,
+            self.info.max_framerate,
+            self.origin,
+        )?;
+        Ok(())
+    }
+
     async fn next_frame(&mut self) -> Result<CapturedFrame, CaptureError> {
+        if let Some(error) = self.failure.borrow().clone() {
+            return Err(CaptureError::Unavailable(error));
+        }
         match tokio::time::timeout(Duration::from_millis(100), self.receiver.changed()).await {
             Err(_) => return Err(CaptureError::Timeout),
             Ok(Err(_)) => return Err(CaptureError::Unavailable("capture stream closed".into())),
@@ -254,6 +317,10 @@ mod tests {
                 },
                 receiver,
                 stream: None,
+                display_id: 7,
+                max_width: 1920,
+                origin: Instant::now(),
+                failure: watch::channel(None).1,
             },
         )
     }
@@ -264,6 +331,26 @@ mod tests {
             data: Bytes::from_static(&[0; 6]),
             timestamp_us,
         }
+    }
+    #[test]
+    fn recovery_matches_identity_not_enumeration_order() {
+        assert_eq!(matching_display(&[8, 7], 7).unwrap(), 1);
+        assert_eq!(matching_display(&[7, 8], 7).unwrap(), 0);
+        assert!(matching_display(&[8], 7).is_err());
+        assert!(matching_display(&[7, 7], 7).is_err());
+        assert!(matching_display(&[], 7).is_err());
+    }
+    #[tokio::test]
+    async fn native_failure_is_reported_before_stale_frame() {
+        let (tx, mut capture) = capture();
+        tx.send_replace(Some(frame(100)));
+        let (failure_tx, failure) = watch::channel(Some("permission revoked".into()));
+        capture.failure = failure;
+        assert!(matches!(
+            capture.next_frame().await,
+            Err(CaptureError::Unavailable(_))
+        ));
+        drop(failure_tx);
     }
     #[tokio::test]
     async fn latest_frame_replaces_stale_frames_and_keeps_clock() {

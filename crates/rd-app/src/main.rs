@@ -417,12 +417,7 @@ fn draw_sidebar(
     {
         selected = Some(Page::Settings);
     }
-    updates.show(
-        ui,
-        update_rect,
-        settings_row.shrink2(Vec2::new(8.0, 0.0)),
-        theme,
-    );
+    updates.show(ui, update_rect, settings_row, theme);
     selected
 }
 
