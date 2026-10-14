@@ -79,7 +79,7 @@ impl SyntheticCapturer {
         let block_w = (w / 16).max(1);
         let block_h = (h / 8).max(1);
         let travel = (frame % (w as u64)) as usize;
-        let bx = if (frame / w as u64) % 2 == 0 {
+        let bx = if (frame / w as u64).is_multiple_of(2) {
             travel
         } else {
             w - travel
@@ -87,8 +87,8 @@ impl SyntheticCapturer {
         let bx = bx.min(w - block_w);
         let by = (h - block_h) / 2;
         let mut block_row = base_row.clone();
-        for x in bx..(bx + block_w).min(w) {
-            block_row[x] = 235;
+        for slot in &mut block_row[bx..(bx + block_w).min(w)] {
+            *slot = 235;
         }
 
         let mut buf = BytesMut::with_capacity(w * h + 2 * cw * ch);
@@ -101,11 +101,16 @@ impl SyntheticCapturer {
             buf.extend_from_slice(row);
         }
         for plane in 0..=1 {
-            let mut row = vec![0u8; cw];
-            for x in 0..cw {
-                let bar = ((x * 2) / bar_width).min(BARS.len() - 1);
-                row[x] = if plane == 0 { BARS[bar].1 } else { BARS[bar].2 };
-            }
+            let row: Vec<u8> = (0..cw)
+                .map(|x| {
+                    let bar = ((x * 2) / bar_width).min(BARS.len() - 1);
+                    if plane == 0 {
+                        BARS[bar].1
+                    } else {
+                        BARS[bar].2
+                    }
+                })
+                .collect();
             for _y in 0..ch {
                 buf.extend_from_slice(&row);
             }

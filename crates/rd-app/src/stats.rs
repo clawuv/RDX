@@ -23,13 +23,14 @@ impl Samples {
         v
     }
 
-    /// 最近邻秩分位数；`0.5` 为 p50，`0.95` 为 p95。无样本时返回 0。
+    /// 最近秩（nearest-rank）分位数；`0.5` 为 p50，`0.95` 为 p95。无样本时返回 0。
     pub fn percentile(&self, fraction: f32) -> f32 {
         let sorted = self.sorted();
         if sorted.is_empty() {
             return 0.0;
         }
-        let idx = ((fraction * (sorted.len() as f32 - 1.0)).round() as usize).min(sorted.len() - 1);
+        let rank = (fraction * sorted.len() as f32).ceil().max(1.0);
+        let idx = (rank as usize - 1).min(sorted.len() - 1);
         sorted[idx]
     }
 

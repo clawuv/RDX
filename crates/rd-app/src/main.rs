@@ -536,6 +536,7 @@ impl App {
         }
         y += 44.0;
         let cw = (w - 12.0) / 2.0;
+        #[allow(clippy::type_complexity)] // 静态页数据表，展开成类型别名反而绕
         let groups: [(&str, &[(Icon, &str, &str)]); 2] = [
             (
                 "本机工具",
@@ -671,6 +672,7 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
     );
 }
 
+#[allow(clippy::too_many_arguments)] // UI 绘制辅助：矩形/ID/主题/文案参数天然多
 fn nav_item(
     ui: &mut egui::Ui,
     rect: Rect,

@@ -472,6 +472,7 @@ pub fn text_input(
 }
 
 /// A selectable card (radio-like).
+#[allow(clippy::too_many_arguments)] // UI 绘制辅助：矩形/ID/主题/文案参数天然多
 pub fn choice_card(
     ui: &mut Ui,
     rect: Rect,

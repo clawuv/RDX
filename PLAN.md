@@ -1,6 +1,8 @@
 # RDX 实施计划
 
-- 状态：执行中（P0 工程项本地完成：macOS 构建绿 / 测试全过 / clippy 无警告 / 核心 crate wasm 编译通过；能力矩阵与威胁模型为草案，待评审；Linux+Windows CI 待首推远端确认）
+- 状态：执行中（P1 第一步完成）
+- P0：工程项本地完成（构建绿 / 测试全过 / clippy 无警告 / 核心 crate wasm 编译通过）；能力矩阵与威胁模型为草案待评审；Linux+Windows CI 待首推远端确认。
+- P1 进度（2026-10-14）：**合成源回环垂直切片已跑通**——`cargo run -p rd-app --bin rd-loop`：合成捕获 → openh264 软编/软解 → egui/wgpu YUV 渲染。实测（M 系列 Mac，debug 构建，720p30）：编码 p50/p95 = 2.6/3.0ms，解码 = 2.1/2.4ms，端到端（捕获→上屏）= **6.1/6.8ms**，稳定 30fps——远优于 50ms 门槛，两大风险点（egui/wgpu 视频路径、openh264 集成）验证通过。**剩余**：真实 ScreenCaptureKit 捕获接入（需用户授予 Screen Recording 权限）、硬编路径与 GPU 帧互操作验证（P1 验收里"NV12 零拷贝上传 ≠ 硬解帧零拷贝"一条）、release 构建复测。
 - 制定日期：2026-10-13
 - 架构决策记录：[docs/adr/](docs/adr/)
 - 参考对象：RustDesk（经验与教训来源，见 ADR 各篇 Context）

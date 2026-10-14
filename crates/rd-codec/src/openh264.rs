@@ -4,15 +4,15 @@
 //! 回环管道的专用运行时线程上使用。真实会话接入时再评估 spawn_blocking。
 
 use bytes::{Bytes, BytesMut};
+use openh264::formats::YUVSource as _;
 use openh264::{
     decoder::{Decoder as H264Decoder, DecoderConfig as H264DecoderConfig},
     encoder::{
-        BitRate, Encoder as H264Encoder, EncoderConfig as H264EncoderConfig, FrameRate,
-        FrameType, RateControlMode,
+        BitRate, Encoder as H264Encoder, EncoderConfig as H264EncoderConfig, FrameRate, FrameType,
+        RateControlMode,
     },
     OpenH264API,
 };
-use openh264::formats::YUVSource as _;
 use rd_capture::{CapturedFrame, PixelFormat};
 
 use crate::{CodecError, CodecId, DecodedFrame, Decoder, EncodedPacket, Encoder, EncoderConfig};
