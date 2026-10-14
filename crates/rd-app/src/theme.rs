@@ -179,22 +179,22 @@ pub fn mist() -> Theme {
     theme
 }
 
-/// Neutral dark counterpart to Mist.
+/// Charcoal counterpart to Mist, matching the reference's lighter sidebar.
 pub fn mist_dark() -> Theme {
     let mut t = mist();
     t.name = "Mist Dark";
     t.dark = true;
-    t.bg_top = c(36, 37, 41);
-    t.bg_bottom = c(24, 25, 28);
-    t.surface = c(43, 45, 50);
-    t.surface_hi = c(55, 57, 64);
-    t.stroke = c(67, 70, 78);
-    t.text = c(240, 241, 244);
-    t.text_dim = c(180, 183, 193);
-    t.text_faint = c(152, 156, 168);
-    t.accent = c(131, 157, 232);
-    t.accent2 = c(163, 181, 239);
-    t.neutral = c(87, 91, 101);
+    t.bg_top = c(39, 41, 41);
+    t.bg_bottom = c(30, 32, 32);
+    t.surface = c(39, 41, 41);
+    t.surface_hi = c(49, 51, 51);
+    t.stroke = c(59, 61, 61);
+    t.text = c(235, 237, 237);
+    t.text_dim = c(180, 184, 184);
+    t.text_faint = c(145, 150, 150);
+    t.accent = c(174, 182, 182);
+    t.accent2 = c(204, 210, 210);
+    t.neutral = c(82, 87, 87);
     t
 }
 
@@ -315,16 +315,22 @@ impl Theme {
         if self.name == "Mist" {
             return c(0xf7, 0xf7, 0xf8);
         }
+        if self.name == "Mist Dark" {
+            return self.bg_bottom;
+        }
         let bg = lerp_color(self.bg_top, self.bg_bottom, 0.5);
         lerp_color(bg, self.surface, if self.dark { 0.45 } else { 0.6 })
     }
 
     /// Flat window backdrop (sidebar + margins around the sheet). A step
-    /// darker than [`Theme::inset_bg`] on every theme, so the sheet has the
-    /// same visible edge on all four sides.
+    /// darker than [`Theme::inset_bg`] except on Mist Dark, whose reference
+    /// uses a lighter charcoal sidebar around a darker content area.
     pub fn shell_bg(&self) -> Color32 {
         if self.name == "Mist" {
             return self.bg_bottom;
+        }
+        if self.name == "Mist Dark" {
+            return self.bg_top;
         }
         if self.dark {
             lerp_color(self.bg_bottom, Color32::BLACK, 0.12)
@@ -351,5 +357,29 @@ impl Theme {
             s2 *= 0.85;
         }
         from_hsl(h, s2, l2.clamp(0.12, 0.88))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn charcoal_backgrounds_match_reference_hierarchy() {
+        let theme = mist_dark();
+        assert!(theme.dark);
+        assert_eq!(theme.shell_bg(), c(39, 41, 41));
+        assert_eq!(theme.inset_bg(), c(30, 32, 32));
+        assert!(theme.surface_hi.r() > theme.surface.r());
+        assert!(theme.text.r() > theme.text_dim.r());
+        assert!(theme.text_dim.r() > theme.text_faint.r());
+    }
+
+    #[test]
+    fn light_backgrounds_remain_unchanged() {
+        let theme = mist();
+        assert!(!theme.dark);
+        assert_eq!(theme.shell_bg(), c(0xe2, 0xe3, 0xe5));
+        assert_eq!(theme.inset_bg(), c(0xf7, 0xf7, 0xf8));
     }
 }

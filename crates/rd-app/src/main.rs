@@ -181,7 +181,8 @@ impl eframe::App for App {
         win::install_resize_frame(frame);
         let _ = frame;
         let screen = ctx.content_rect();
-        let tint = if self.vibrancy {
+        // Keep the reference charcoal stable even over a light macOS backdrop.
+        let tint = if self.vibrancy && !self.theme.dark {
             with_alpha(self.theme.shell_bg(), 0.20)
         } else {
             self.theme.shell_bg()
