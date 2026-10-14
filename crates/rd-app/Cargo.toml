@@ -13,8 +13,3 @@ rd-capture = { version = "0.1.0", path = "../rd-capture" }
 rd-codec = { version = "0.1.0", path = "../rd-codec" }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 wgpu = "30"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWindow", "NSView", "NSButton", "NSControl", "NSResponder", "NSVisualEffectView", "NSGraphics", "NSColor"] }
-raw-window-handle = "0.6"

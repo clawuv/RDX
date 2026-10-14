@@ -35,4 +35,4 @@ cargo run -p rd-app
 
 ## 许可证
 
-待定（闭源商用前必须在此定案，并收紧 `deny.toml` 的依赖许可白名单）。
+MIT（见 [LICENSE](LICENSE)）。依赖侧约束见 `deny.toml`：**强 copyleft（AGPL/GPL）依赖一律不得进入**；MPL-2.0 等弱 copyleft 依赖进入前需在 PR 中说明并单独评审。

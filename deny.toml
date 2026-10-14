@@ -1,6 +1,7 @@
 # cargo-deny 配置。
-# 注意：本项目许可证未定（见 README）。若走闭源商用，先收紧本文件的许可白名单
-# （移除 MPL-2.0 等弱 copyleft 项），并逐条审查新依赖。
+# 本项目为 MIT（见 LICENSE）。AGPL/GPL 等强 copyleft 依赖禁止进入
+# （未列入 allow，出现即 fail）；MPL-2.0 等弱 copyleft 依赖可用，
+# 但进入前在 PR 中说明并单独评审。
 
 [graph]
 targets = [
