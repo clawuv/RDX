@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-use rd_capture::{Capturer as _, SyntheticCapturer};
+use rd_capture::SyntheticCapturer;
 use rd_codec::{
     CodecId, DecodedFrame, Decoder as _, Encoder as _, EncoderConfig, OpenH264Decoder,
     OpenH264Encoder,
@@ -88,15 +88,62 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
         width,
         height,
         framerate,
-        bitrate_kbps,
+        ..
     } = config;
 
-    let mut capturer = SyntheticCapturer::with_clock_origin(
+    #[cfg(windows)]
+    if let Ok(value) = std::env::var("RDX_CAPTURE_DISPLAY") {
+        let result = (|| {
+            let index: usize = value.parse().map_err(|_| {
+                rd_capture::CaptureError::Unavailable("invalid display index".into())
+            })?;
+            let displays = rd_capture::dxgi::displays()?;
+            let display = displays.get(index).ok_or_else(|| {
+                rd_capture::CaptureError::Unavailable("display index out of range".into())
+            })?;
+            rd_capture::dxgi::RecoveringDxgiCapturer::new(
+                display,
+                *ORIGIN.get_or_init(Instant::now),
+            )
+        })();
+        match result {
+            Ok(capturer) => run_captured(capturer, config, tx, repaint).await,
+            Err(e) => eprintln!("rdx: DXGI initialization failed: {e}"),
+        }
+        return;
+    }
+    let capturer = SyntheticCapturer::with_clock_origin(
         width,
         height,
         framerate,
         *ORIGIN.get_or_init(Instant::now),
     );
+    run_captured(capturer, config, tx, repaint).await;
+}
+
+async fn run_captured(
+    mut capturer: impl rd_capture::Capturer,
+    config: PipelineConfig,
+    tx: watch::Sender<Option<LoopFrame>>,
+    repaint: egui::Context,
+) {
+    let (mut width, mut height) = (capturer.info().width, capturer.info().height);
+    let PipelineConfig {
+        framerate,
+        bitrate_kbps,
+        ..
+    } = config;
+    if width == 0
+        || height == 0
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+        || framerate == 0
+    {
+        eprintln!("rdx: capture requires positive even dimensions and positive framerate");
+        return;
+    }
+    let mut pace = tokio::time::interval(Duration::from_secs_f64(1.0 / framerate as f64));
+    pace.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let encoder_cfg = EncoderConfig {
         codec: CodecId::H264,
         bitrate_kbps,
@@ -122,9 +169,46 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
         if tx.is_closed() {
             return;
         }
-        let Ok(captured) = capturer.next_frame().await else {
-            eprintln!("rdx: synthetic capture failed, stopping pipeline");
-            return;
+        pace.tick().await;
+        let captured = match capturer.next_frame().await {
+            Ok(frame) => frame,
+            Err(rd_capture::CaptureError::Timeout) => continue,
+            Err(rd_capture::CaptureError::DisplayChanged) => {
+                if tx.send(None).is_err() {
+                    return;
+                }
+                repaint.request_repaint();
+                if !recover_capture(&mut capturer, &tx).await {
+                    return;
+                }
+                (width, height) = (capturer.info().width, capturer.info().height);
+                if width == 0
+                    || height == 0
+                    || !width.is_multiple_of(2)
+                    || !height.is_multiple_of(2)
+                {
+                    eprintln!("rdx: recovered display has unsupported dimensions");
+                    return;
+                }
+                let (Ok(new_encoder), Ok(new_decoder)) =
+                    (OpenH264Encoder::new(encoder_cfg), OpenH264Decoder::new())
+                else {
+                    eprintln!("rdx: codec recreation failed");
+                    return;
+                };
+                encoder = new_encoder;
+                decoder = new_decoder;
+                encode_ms = Samples::default();
+                decode_ms = Samples::default();
+                window_frames = 0;
+                window_start_us = now_us();
+                pace.reset();
+                continue;
+            }
+            Err(e) => {
+                eprintln!("rdx: capture stopped: {e}; restart after display changes");
+                return;
+            }
         };
         let t_encode_start = now_us();
         let Ok(packets) = encoder.encode(&captured).await else {
@@ -173,5 +257,108 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
             window_frames = 0;
             window_start_us = now_us();
         }
+    }
+}
+
+async fn recover_capture(
+    capturer: &mut impl rd_capture::Capturer,
+    tx: &watch::Sender<Option<LoopFrame>>,
+) -> bool {
+    recover_capture_with_delay(capturer, tx, Duration::from_millis(250)).await
+}
+
+async fn recover_capture_with_delay(
+    capturer: &mut impl rd_capture::Capturer,
+    tx: &watch::Sender<Option<LoopFrame>>,
+    base_delay: Duration,
+) -> bool {
+    for attempt in 0..5 {
+        if tx.is_closed() {
+            return false;
+        }
+        let delay = base_delay * (1 << attempt);
+        tokio::select! {
+            _ = tx.closed() => return false,
+            _ = tokio::time::sleep(delay) => {}
+        }
+        match capturer.recover() {
+            Ok(()) => {
+                eprintln!("rdx: capture recovered on attempt {}", attempt + 1);
+                return true;
+            }
+            Err(e) => eprintln!("rdx: capture recovery attempt {} failed: {e}", attempt + 1),
+        }
+    }
+    eprintln!("rdx: capture recovery exhausted; stopping");
+    false
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use rd_capture::{CaptureError, CaptureInfo, CapturedFrame, Capturer, PixelFormat};
+    struct Fake {
+        attempts: usize,
+        succeed_at: usize,
+        info: CaptureInfo,
+    }
+    impl Capturer for Fake {
+        fn info(&self) -> &CaptureInfo {
+            &self.info
+        }
+        fn recover(&mut self) -> Result<(), CaptureError> {
+            self.attempts += 1;
+            if self.attempts >= self.succeed_at {
+                Ok(())
+            } else {
+                Err(CaptureError::DisplayChanged)
+            }
+        }
+        async fn next_frame(&mut self) -> Result<CapturedFrame, CaptureError> {
+            Err(CaptureError::Timeout)
+        }
+    }
+    fn fake(succeed_at: usize) -> Fake {
+        Fake {
+            attempts: 0,
+            succeed_at,
+            info: CaptureInfo {
+                width: 2,
+                height: 2,
+                format: PixelFormat::Bgra8,
+                max_framerate: 30,
+            },
+        }
+    }
+    #[tokio::test]
+    async fn retries_then_recovers() {
+        let (tx, _rx) = watch::channel(None);
+        let mut capture = fake(3);
+        assert!(recover_capture_with_delay(&mut capture, &tx, Duration::ZERO).await);
+        assert_eq!(capture.attempts, 3);
+    }
+    #[tokio::test]
+    async fn stops_after_five_attempts() {
+        let (tx, _rx) = watch::channel(None);
+        let mut capture = fake(6);
+        assert!(!recover_capture_with_delay(&mut capture, &tx, Duration::ZERO).await);
+        assert_eq!(capture.attempts, 5);
+    }
+    #[tokio::test]
+    async fn closing_ui_cancels_backoff() {
+        let (tx, rx) = watch::channel(None);
+        let mut capture = fake(1);
+        let recovery = recover_capture_with_delay(&mut capture, &tx, Duration::from_secs(60));
+        let close = async move {
+            tokio::task::yield_now().await;
+            drop(rx);
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(recovery, close)
+        })
+        .await
+        .unwrap();
+        assert!(!result);
+        assert_eq!(capture.attempts, 0);
     }
 }
