@@ -35,6 +35,11 @@ pub fn cr(r: f32) -> CornerRadius {
     CornerRadius::same(r.round().clamp(0.0, 255.0) as u8)
 }
 
+/// Single soft divider stroke shared by every page's hairlines.
+pub fn divider(theme: &Theme) -> Stroke {
+    Stroke::new(1.0, with_alpha(theme.stroke, 0.25))
+}
+
 pub fn shadow(painter: &Painter, rect: Rect, radius: f32, strength: f32, theme: &Theme) {
     let a = if theme.dark { 0.32 } else { 0.10 } * strength;
     let s = Shadow {

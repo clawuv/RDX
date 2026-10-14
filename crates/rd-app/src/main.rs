@@ -57,7 +57,7 @@ fn main() -> eframe::Result<()> {
                 sidebar: true,
                 scroll: 0.0,
                 vibrancy: false,
-                page: Page::Tools,
+                page: Page::Assistance,
                 assistance: assistance::Assistance::default(),
                 settings: settings::Settings::default(),
                 device_page: 0,
@@ -370,7 +370,7 @@ fn draw_sidebar(
         Pos2::new(side.left() + 24.0, y),
         Align2::LEFT_TOP,
         "最近设备",
-        menu(13.5),
+        menu(12.0),
         theme.text_dim,
     );
     if nav_item(
@@ -442,7 +442,7 @@ impl App {
             Pos2::new(x, y + 14.0),
             Align2::LEFT_CENTER,
             "已登记设备",
-            bold(18.0),
+            font(15.0),
             t.text,
         );
         let devices = [
@@ -497,10 +497,8 @@ impl App {
         let total = filtered.len();
         let pager_top = content.bottom() - 68.0;
         let pager = Rect::from_min_size(Pos2::new(x, pager_top), Vec2::new(w, 52.0));
-        ui.painter().line_segment(
-            [pager.left_top(), pager.right_top()],
-            Stroke::new(1.0, with_alpha(t.stroke, 0.4)),
-        );
+        ui.painter()
+            .line_segment([pager.left_top(), pager.right_top()], widgets::divider(t));
         let controls_top = pager.top() + 20.0;
         let center_y = controls_top + 14.0;
         ui.painter().text(
@@ -601,7 +599,7 @@ impl App {
                         if position + 1 < end {
                             ui.painter().line_segment(
                                 [row.left_bottom(), row.right_bottom()],
-                                Stroke::new(1.0, with_alpha(t.stroke, 0.4)),
+                                widgets::divider(t),
                             );
                         }
                     }
@@ -671,7 +669,7 @@ impl App {
                 Pos2::new(x, y + 12.0),
                 Align2::LEFT_CENTER,
                 label,
-                bold(16.0),
+                font(15.0),
                 t.text,
             );
             y += 28.0;
@@ -729,6 +727,8 @@ impl App {
                 .rect_filled(thumb, cr(3.0), with_alpha(t.text_faint, 0.8));
         }
         ui.set_clip_rect(original_clip);
+        ui.painter()
+            .hline(x..=(x + w), banner_top - 14.0, widgets::divider(t));
         promo(
             ui,
             Rect::from_min_size(Pos2::new(x, banner_top), Vec2::new(w, 52.0)),

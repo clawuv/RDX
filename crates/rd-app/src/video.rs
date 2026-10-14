@@ -4,6 +4,7 @@
 //! YUV→RGB（BT.601 limited range）在片元着色器完成，CPU 侧零颜色转换。
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use egui_wgpu::CallbackTrait;
 use rd_codec::DecodedFrame;
@@ -72,6 +73,7 @@ pub struct VideoShared {
 
 struct VideoInner {
     counters: crate::stats::RenderCounters,
+    gpu_done: Arc<Mutex<crate::stats::GpuDone>>,
     pipeline: RenderPipeline,
     layout: BindGroupLayout,
     sampler: Sampler,
@@ -144,6 +146,7 @@ impl VideoShared {
         Arc::new(Self {
             inner: Mutex::new(VideoInner {
                 counters: crate::stats::RenderCounters::default(),
+                gpu_done: Arc::new(Mutex::new(crate::stats::GpuDone::default())),
                 pipeline,
                 layout,
                 sampler,
@@ -216,15 +219,23 @@ impl VideoShared {
         write_plane(&queue, &y, y_rows, w as u32);
         write_plane(&queue, &u, u_rows, (w / 2) as u32);
         write_plane(&queue, &v, v_rows, (w / 2) as u32);
-        self.inner
+        let mut inner = self.inner.lock().expect("video state lock");
+        inner
+            .gpu_done
             .lock()
-            .expect("video state lock")
-            .counters
-            .uploaded();
+            .expect("gpu done lock")
+            .note_upload(frame.timestamp_us);
+        inner.counters.uploaded();
     }
 
     pub fn counters(&self) -> crate::stats::RenderCounters {
         self.inner.lock().expect("video state lock").counters
+    }
+
+    pub fn gpu_done(&self) -> crate::stats::GpuDoneSnapshot {
+        let inner = self.inner.lock().expect("video state lock");
+        let snapshot = inner.gpu_done.lock().expect("gpu done lock").snapshot();
+        snapshot
     }
 
     pub fn clear_frame(&self) {
@@ -264,6 +275,20 @@ impl VideoShared {
         );
         render_pass.draw(0..3, 0..1);
         inner.counters.drawn();
+        // 注册队列清空回调：触发时刻代表注册前已提交命令（含当帧上传）
+        // 的 GPU 完成，是绘制回调之外唯一的 GPU 反馈；不含呈现。
+        let begun = inner.gpu_done.lock().expect("gpu done lock").begin();
+        if let Some(ts_snapshot_us) = begun {
+            let gpu_done = Arc::clone(&inner.gpu_done);
+            let registered = Instant::now();
+            inner.queue.on_submitted_work_done(move || {
+                let lag = registered.elapsed();
+                let fire_now_us = crate::pipeline::now_us();
+                if let Ok(mut done) = gpu_done.lock() {
+                    done.finish(ts_snapshot_us, lag, fire_now_us);
+                }
+            });
+        }
     }
 }
 

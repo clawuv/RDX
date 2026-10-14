@@ -1,6 +1,9 @@
 # RDX 实施计划
 
 - 状态：执行中（P1 合成视频链路验证；尚未验收）
+- 呈现观测：pattern_window 新增逐帧 trace 与帧号低 8 位指纹角标（rd-app/src/pattern.rs 绘制/读取共用几何，含单测），新增 present_probe 探针用 SCK 捕获读回指纹并与 trace 对齐，首次测得“图案帧发布→被显示器内容捕获观察到”前台 p50/p95≈50/58ms（debug 与 release 一致；release 下回调内转换 0.45ms/帧，~50ms 主要来自呈现/合成/显示刷新/SCStream 交付链，为观测上界而非呈现回调）；`Visible(false)` 隐藏后检出 ~11s 冻结段，macOS 全屏窗口对 Minimized 命令无响应。本地窗口发布→可见已 ≈3 个 60Hz 刷新周期，P1 的 50ms 预算需先明确测量点定义再判定；rd-loop 遮挡对比待做，详见 docs/p1-macos-2026-10-14.md。
+- 发行许可定为 AGPL-3.0-only：LICENSE、11 个 workspace crate 元数据与 deny.toml 白名单同步，化解 MIT LICENSE 与 AGPL 派生 UI 并存的冲突；字体许可与第三方定向例外（BSL/OFL）仍待核对，见 docs/licensing-inventory.md。
+- 受控动态素材与 GPU 完成测量：新增 pattern_window 示例（帧序号驱动的棋盘/白条/帧号图案，按截止时间推进节拍，全屏于被采显示器即得可复现素材）；video.rs 接入 on_submitted_work_done 队列清空回调并输出 register→fire 与 capture→gpu_done p50/p95（不含本帧绘制与呈现）。合成源与 pattern 全屏真屏各一组限时实测：真屏 capture→upload p50/p95=10.35/11.53ms、capture→gpu_done p50/p95=44.75/48.39ms，GPU 队列未见持续积压；呈现测量与前台/遮挡对比仍未完成，不据此宣布 <50ms，详见 docs/p1-macos-2026-10-14.md。
 - macOS 验证推进：真屏连续采样（`macos_probe --seconds/--recreate`）、CPU 编解码基准 `loop_bench`、rd-loop 限时运行（`RDX_LOOP_SECONDS=1..120`，到时输出汇总并正常关窗）与 release GPU 回环对照均已实测；macOS 真屏重建按原 display_id 匹配显示器，原生流错误优先于旧帧上报。
 - 同轮增量：捕获链路新增回调/发布/读取/序号缺口与累计转换耗时诊断（恢复时重置，探针输出）；NV12→I420 去交织改为一次分配、单次 UV 遍历并补行宽对照测试。rd-capture 10 项、rd-app+rd-capture 共 27 项测试通过，严格 clippy 与格式检查通过。仍无受控动态素材、视觉/前台遮挡对比与 GPU 呈现测量，不据此验收 1080p30 或端到端 <50ms，详见 docs/p1-macos-2026-10-14.md。
 - DXGI 后续：已实现有上限的显示失效重建、原输出匹配和编解码器重置；本机主动资源重建取帧通过，19 项相关测试通过。真实显示配置变化及恢复画面验收仍待完成。
@@ -9,7 +12,7 @@
 - 再次验收：补齐 3 项停帧/关闭回归测试并修复最后一帧丢失；恢复后的界面文本已读到。视觉及受控最小化对比仍受窗口工具错误阻塞，尚未全项通过。
 - 当前先验收：统计功能测试、构建、clippy 与运行日志已验证；截图超时，前台/最小化对比及停止状态交互检查待补，暂停推进 DXGI。见 docs/p1-render-counters-2026-10-14.md。
 - P1 后续开发：回环新增 logic / upload / draw / unique_draw 统计与上传后未绘制即覆盖计数；无新帧时也更新上传速率。CPU 绘制回调不等同 GPU 完成或上屏，真实捕获与性能验收仍待完成。
-- 2026-10-14 P0 补齐：本机 25 项测试、严格 clippy 与三核心 crate wasm 编译通过；已补 CI 依赖审查及平台/认证范围文档。cargo-deny 的 bans/sources 通过，licenses/advisories 失败；当前提交三平台 CI、安全评审及许可决策仍待完成，详见 docs/p0-audit-2026-10-14.md。
+- 2026-10-14 P0 补齐：本机 25 项测试、严格 clippy 与三核心 crate wasm 编译通过；已补 CI 依赖审查及平台/认证范围文档。cargo-deny 的 bans/sources 通过；许可决策已定 AGPL-3.0-only（LICENSE、workspace 元数据与 deny.toml 白名单同步），licenses 的第三方定向例外（BSL/OFL）与 advisories（ttf-parser 停维护）仍待处置，三平台 CI 及安全评审待完成，详见 docs/p0-audit-2026-10-14.md 与 docs/licensing-inventory.md。
 - P1：合成捕获、H.264 软编软解、GPU I420 上传与渲染已实现；真实 DXGI / ScreenCaptureKit / X11 捕获、硬编互操作、真实上屏延迟测量与录屏未完成。
 - 历史 720p Mac 数据仅保留为早期观察：发现捕获器与 UI 时间戳起点不同，且测量截止点是上传提交而非呈现，因此不再用于 <50ms 端到端验收。
 - 本轮开发：修复时钟起点、解码分段计时、无界视频队列及 clippy；回环提升至 1920×1080@30、8Mbps，继续留在 P1。
@@ -83,7 +86,7 @@ rd/  （实际目录名 RDX）
 
 ### P1：单机视频垂直切片（6 周）——全项目最高风险段，最先做
 
-当前实现进度：Windows DXGI 已有单帧探针与失效恢复；macOS ScreenCaptureKit 已接入显式选择显示器的回环入口，并完成真屏连续采样、CPU 编解码基准与 release 回环对照，详见 [macOS 接入记录](docs/p1-macos-2026-10-14.md)。P1 退出标准仍未通过，下一步为受控动态素材下的前台/遮挡对比及 GPU 完成/呈现测量，不提前启动 P2。
+当前实现进度：Windows DXGI 已有单帧探针与失效恢复；macOS ScreenCaptureKit 已接入显式选择显示器的回环入口，并完成真屏连续采样、受控动态素材（pattern_window）、GPU 完成反馈、呈现观测探针（present_probe）与 release 回环对照，详见 [macOS 接入记录](docs/p1-macos-2026-10-14.md)。P1 退出标准仍未通过，下一步为 release 呈现复测以分离测量侧延迟、rd-loop 前台/遮挡对比，不提前启动 P2。
 
 同机回环：捕获 → 编码 → 解码 → egui 显示，30fps@1080p。验证两件最没把握的事：**egui 视频路径性能**和**捕获/编码 trait 的接口形状**。
 

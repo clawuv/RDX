@@ -57,4 +57,4 @@ Windows 的主界面和 `rd-loop` 默认使用 wgpu/DX12，避免部分旧版 In
 
 ## 许可证
 
-待定：根目录 [LICENSE](LICENSE) 当前为 MIT，但 `rd-app` 仍包含 AGPL-3.0 派生的参考 UI 与复制字体（见 `crates/rd-app/assets/REFERENCE-NOTICE.md`），两者冲突尚未解决。发行定案前以 [docs/licensing-inventory.md](docs/licensing-inventory.md) 为准，并收紧 `deny.toml` 的依赖许可白名单。
+AGPL-3.0-only（见 [LICENSE](LICENSE)）。`rd-app` 部分参考 UI 与字体源自 DCX/SquirrelDisk（AGPL-3.0-only），来源声明见 `crates/rd-app/assets/REFERENCE-NOTICE.md`；字体对应版本许可仍待核对，详见 [docs/licensing-inventory.md](docs/licensing-inventory.md)。依赖侧约束见 `deny.toml`。

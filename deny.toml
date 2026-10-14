@@ -1,6 +1,7 @@
 # cargo-deny 配置。
-# 注意：本项目许可证未定（见 README）。若走闭源商用，先收紧本文件的许可白名单
-# （移除 MPL-2.0 等弱 copyleft 项），并逐条审查新依赖。
+# 项目自有代码与发行许可为 AGPL-3.0-only（含源自 DCX/SquirrelDisk 的派生 UI），
+# 见 docs/licensing-inventory.md。AGPL-3.0-only 列入白名单主要覆盖自有 workspace
+# crate；第三方依赖仍以宽松许可为主，新增弱/强 copyleft 依赖前先核对许可全文。
 
 [graph]
 targets = [
@@ -24,6 +25,7 @@ allow = [
     "0BSD",
     "CC0-1.0",
     "MPL-2.0",
+    "AGPL-3.0-only",
 ]
 
 [bans]

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rd_app::pipeline::{self, LoopFrame, PipelineConfig};
-use rd_app::stats::{RenderCounters, Samples};
+use rd_app::stats::{GpuDoneSnapshot, RenderCounters, Samples};
 use rd_app::video::{VideoShared, YuvPaintCallback};
 use tokio::sync::watch;
 
@@ -128,11 +128,10 @@ impl LoopApp {
 
     fn report_rates_at(&mut self, now: u64) {
         if now - self.second_start_us >= 1_000_000 {
-            let counts = self
-                .shared
-                .as_ref()
-                .map(|s| s.counters())
-                .unwrap_or_default();
+            let (counts, gpu) = match self.shared.as_ref() {
+                Some(shared) => (shared.counters(), shared.gpu_done()),
+                None => (RenderCounters::default(), GpuDoneSnapshot::default()),
+            };
             let seconds = (now - self.second_start_us) as f32 / 1e6;
             self.unique_draw_fps =
                 (counts.unique_draws - self.previous_counters.unique_draws) as f32 / seconds;
@@ -142,6 +141,14 @@ impl LoopApp {
                 (counts.draws - self.previous_counters.draws) as f32 / seconds,
                 self.unique_draw_fps,
                 counts.superseded - self.previous_counters.superseded,
+            );
+            eprintln!(
+                "rdx gpu-done: completions={} register→fire p50/p95={:.2}/{:.2}ms capture→gpu_done p50/p95={:.2}/{:.2}ms (uploads+prior draws; not presentation)",
+                gpu.completions,
+                gpu.register_to_fire_p50_ms,
+                gpu.register_to_fire_p95_ms,
+                gpu.capture_to_gpu_done_p50_ms,
+                gpu.capture_to_gpu_done_p95_ms,
             );
             self.previous_counters = counts;
             self.logic_ticks = 0;
@@ -167,13 +174,12 @@ impl eframe::App for LoopApp {
             .is_some_and(|limit| self.started.elapsed() >= limit)
         {
             if !self.summary_reported {
-                let counts = self
-                    .shared
-                    .as_ref()
-                    .map(|s| s.counters())
-                    .unwrap_or_default();
-                eprintln!("rdx bounded summary: elapsed={:.2}s uploads={} draws={} unique_draws={} superseded={} pipeline_stopped={} rolling_upload_p50/p95={:.2}/{:.2}ms (not GPU completion/presentation)",
-                    self.started.elapsed().as_secs_f64(), counts.uploads, counts.draws, counts.unique_draws, counts.superseded, self.pipeline_stopped, self.e2e_ms.percentile(0.5), self.e2e_ms.percentile(0.95));
+                let (counts, gpu) = match self.shared.as_ref() {
+                    Some(shared) => (shared.counters(), shared.gpu_done()),
+                    None => (RenderCounters::default(), GpuDoneSnapshot::default()),
+                };
+                eprintln!("rdx bounded summary: elapsed={:.2}s uploads={} draws={} unique_draws={} superseded={} pipeline_stopped={} rolling_upload_p50/p95={:.2}/{:.2}ms gpu_done={} register→fire_p50/p95={:.2}/{:.2}ms capture→gpu_done_p50/p95={:.2}/{:.2}ms (uploads+prior draws; not presentation)",
+                    self.started.elapsed().as_secs_f64(), counts.uploads, counts.draws, counts.unique_draws, counts.superseded, self.pipeline_stopped, self.e2e_ms.percentile(0.5), self.e2e_ms.percentile(0.95), gpu.completions, gpu.register_to_fire_p50_ms, gpu.register_to_fire_p95_ms, gpu.capture_to_gpu_done_p50_ms, gpu.capture_to_gpu_done_p95_ms);
                 self.summary_reported = true;
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -209,7 +215,7 @@ impl eframe::App for LoopApp {
                 ));
             });
             ui.add_space(4.0);
-            ui.label("CPU draw callbacks only; GPU completion / presentation not measured.");
+            ui.label("GPU queue-drain via on_submitted_work_done; presentation not measured.");
             if self.pipeline_stopped {
                 ui.colored_label(
                     egui::Color32::RED,

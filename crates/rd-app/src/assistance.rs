@@ -58,13 +58,13 @@ impl Assistance {
                         Pos2::new(x, y + 14.0),
                         Align2::LEFT_CENTER,
                         "远程协助本机",
-                        bold(18.0),
+                        font(15.0),
                         theme.text,
                     );
                     widgets::toggle(
                         ui,
                         Rect::from_center_size(
-                            Pos2::new(x + 158.0, y + 14.0),
+                            Pos2::new(x + 134.0, y + 14.0),
                             Vec2::new(40.0, 24.0),
                         ),
                         Id::new("assistance-enabled"),
@@ -74,7 +74,7 @@ impl Assistance {
                     widgets::draw_icon(
                         &p,
                         Icon::Shield,
-                        Rect::from_center_size(Pos2::new(x + 204.0, y + 14.0), Vec2::splat(21.0)),
+                        Rect::from_center_size(Pos2::new(x + 180.0, y + 14.0), Vec2::splat(21.0)),
                         theme.accent,
                     );
                     p.text(
@@ -167,7 +167,7 @@ impl Assistance {
                         Pos2::new(x, y + 148.0),
                         Align2::LEFT_CENTER,
                         "远程协助他人",
-                        bold(18.0),
+                        font(15.0),
                         theme.text,
                     );
                     let input_y = y + 172.0;
@@ -230,9 +230,17 @@ impl Assistance {
                         )),
                         |ui| {
                             ui.horizontal(|ui| {
-                                ui.radio_value(&mut self.files, false, "远程桌面");
+                                ui.radio_value(
+                                    &mut self.files,
+                                    false,
+                                    egui::RichText::new("远程桌面").font(font(12.0)),
+                                );
                                 ui.add_space(20.0);
-                                ui.radio_value(&mut self.files, true, "远程文件");
+                                ui.radio_value(
+                                    &mut self.files,
+                                    true,
+                                    egui::RichText::new("远程文件").font(font(12.0)),
+                                );
                             });
                         },
                     );
@@ -245,6 +253,7 @@ impl Assistance {
                             theme.text_dim,
                         );
                     }
+                    p.hline(x..=(x + w), y + 264.0, widgets::divider(theme));
                     if self.banner {
                         let banner =
                             Rect::from_min_size(Pos2::new(x, y + 280.0), Vec2::new(224.0, 76.0));

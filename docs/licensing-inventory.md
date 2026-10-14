@@ -1,20 +1,26 @@
 # P0 许可与来源清单
 
-本清单记录来源，不是法律评审或重新许可授权。当前不得把本仓库当作许可条件已清理的闭源发行物。
+本清单记录来源，不是法律评审或重新许可授权。
+
+## 发行许可决策（2026-10-14，权利人裁定）
+
+- 仓库发行许可定为 **AGPL-3.0-only**：根目录 LICENSE 替换为 GNU AGPL v3 全文（与 DCX/SquirrelDisk 来源声明一致），workspace 11 个 crate 声明 `AGPL-3.0-only`，`deny.toml` 白名单加入 AGPL-3.0-only（主要覆盖自有 crate）。
+- 此前的冲突（a8eacf1 切 MIT 并移除派生 UI，9f1e544 合并带回派生 UI）就此消解：派生 UI 的 AGPL 义务与仓库许可一致，REFERENCE-NOTICE.md 与 SQUIRRELDISK-LICENSE 继续保留。
+
+## 来源清单
 
 | 内容 | 来源 / 已知声明 | 当前处理 |
 |---|---|---|
-| UI 绘制、主题、窗口辅助代码 | DCX / SquirrelDisk，AGPL-3.0-only 声明 | 保留 REFERENCE-NOTICE.md 与原许可全文；发行方案确定前不移除声明、不改写成宽松许可 |
+| UI 绘制、主题、窗口辅助代码 | DCX / SquirrelDisk，AGPL-3.0-only 声明 | 与仓库许可一致；保留 REFERENCE-NOTICE.md 与原许可全文 |
 | Inter-Regular.ttf、Inter-SemiBold.ttf | 从 DCX 复制 | 需核对确切字体版本及上游许可，并附对应许可全文；当前来源说明不替代字体许可 |
 | Rust 第三方依赖 | Cargo.lock 与各 crate 元数据 | cargo-deny 固定版本检查 licenses / bans / sources / advisories |
-| RDX 自有代码 | workspace crate 未声明统一 license | 需权利人确定发行许可；不以自动忽略无许可错误通过审查 |
-| 根目录 LICENSE（MIT） | a8eacf1 切换为 MIT 并移除 AGPL 派生 UI；其后 9f1e544 合并（prefer remote changes）又带回派生 UI，README 许可证说明被同时回退 | 与上表 AGPL 派生内容相抵，定案前不作为有效发行许可承诺 |
+| RDX 自有代码 | workspace crate 声明 AGPL-3.0-only（2026-10-14 起） | 随 LICENSE 一致；新文件按 AGPL 头部惯例处理由发行工程（P7）统一定 |
 
 ## 审查规则
 
 CI 新增 dependencies 门槛，不使用 continue-on-error。许可证未知或工具报告错误时保持失败，不通过扩大白名单、忽略 workspace 或排除依赖掩盖问题。新增许可仅在核对具体包/版本与来源后采用定向例外。来源仅允许 crates.io；git 依赖须明确评审后再加入。
 
-尚待决定：仓库统一发行许可、AGPL 派生代码的发行义务、字体对应版本许可及打包归档。P0 不能因 deny.toml 存在就视为许可审查完成。
+尚待决定：字体对应版本许可及打包归档；clipboard-win / error-code 的 BSL-1.0、epaint 自带字体的 OFL-1.1 / Ubuntu-font 定向例外核对；ttf-parser 停维护告警的替换或裁剪处置。仓库发行许可已定 AGPL-3.0-only。
 
 ## 2026-10-14 实测结果
 
