@@ -27,6 +27,30 @@ allow = [
     "MPL-2.0",
     "AGPL-3.0-only",
 ]
+# 定向例外：只放行已在 docs/licensing-inventory.md 核对过的具体 crate，
+# 不把 BSL / OFL / Ubuntu-font 放进全局 allow。
+
+[[licenses.exceptions]]
+crate = "clipboard-win"
+allow = ["BSL-1.0"]
+# Windows 剪贴板适配（egui/arboard 依赖链）；Boost Software License 1.0，宽松可再分发。
+
+[[licenses.exceptions]]
+crate = "error-code"
+allow = ["BSL-1.0"]
+# clipboard-win 的错误码辅助 crate；同样 BSL-1.0。
+
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+# egui/epaint 自带默认字体资源许可；与仓库自带的 Inter（OFL-1.1）分开核对。
+# 发行打包仍须随附相应字体许可全文（见 licensing-inventory）。
+
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+# ureq（rd-app 更新检查）拉取的 Mozilla/ISRG CA 根证书数据；CDLA Permissive 2.0，
+# 属数据许可而非代码 copyleft。不把 CDLA 放进全局 allow。
 
 [bans]
 multiple-versions = "warn"
@@ -41,3 +65,11 @@ allow-git = []
 [advisories]
 version = 2
 yanked = "deny"
+# RUSTSEC-2026-0192：ttf-parser 0.25.1 停维护（unmaintained），无安全升级版本。
+# 依赖路径：winit → sctk-adwaita → ab_glyph → owned_ttf_parser → ttf-parser
+# （Linux/Wayland 窗口装饰）。属停维护告警，非已证实可利用漏洞。
+# 暂 ignore 以保持 Wayland 装饰能力；跟踪上游替换/裁剪后再撤 ignore。
+# 跟踪：docs/licensing-inventory.md「尚待决定」+ 后续 issue/上游 winit 升级。
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained ttf-parser via winit/sctk-adwaita Wayland decorations; no fix available; keep Wayland chrome until upstream replaces; see docs/licensing-inventory.md" },
+]

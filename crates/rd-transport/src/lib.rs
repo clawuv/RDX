@@ -21,4 +21,10 @@ pub trait Transport: Send {
 
 mod channel;
 
+#[cfg(feature = "webrtc")]
+mod str0m_impl;
+
 pub use channel::{channel_pair, ChannelTransport};
+
+#[cfg(feature = "webrtc")]
+pub use str0m_impl::{connect_pair, Str0mEvent, Str0mTransport};

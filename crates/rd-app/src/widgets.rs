@@ -705,6 +705,10 @@ pub enum Icon {
     Share,
     /// 2×2 tile grid, for the dashboard entry.
     Grid,
+    /// Person glyph for account/avatar controls.
+    User,
+    /// Door with an arrow leaving it: sign out.
+    Logout,
 }
 
 pub fn draw_icon(p: &Painter, icon: Icon, r: Rect, c: Color32) {
@@ -998,6 +1002,34 @@ fn draw_icon_ex(p: &Painter, icon: Icon, r: Rect, c: Color32, stroke_mul: f32) {
                 cr(1.5),
                 c,
             );
+        }
+        Icon::User => {
+            p.circle_stroke(at(0.0, -0.34), s * 0.30, st);
+            p.line(
+                vec![
+                    at(-0.68, 0.78),
+                    at(-0.58, 0.42),
+                    at(-0.32, 0.22),
+                    at(0.0, 0.16),
+                    at(0.32, 0.22),
+                    at(0.58, 0.42),
+                    at(0.68, 0.78),
+                ],
+                st,
+            );
+        }
+        Icon::Logout => {
+            p.add(Shape::closed_line(
+                vec![
+                    at(0.0, -0.75),
+                    at(-0.8, -0.75),
+                    at(-0.8, 0.75),
+                    at(0.0, 0.75),
+                ],
+                st,
+            ));
+            p.line_segment([at(-0.1, 0.0), at(0.78, 0.0)], st);
+            p.line(vec![at(0.4, -0.38), at(0.78, 0.0), at(0.4, 0.38)], st);
         }
         Icon::Grid => {
             let g = s * 0.14;

@@ -20,7 +20,9 @@
 
 CI 新增 dependencies 门槛，不使用 continue-on-error。许可证未知或工具报告错误时保持失败，不通过扩大白名单、忽略 workspace 或排除依赖掩盖问题。新增许可仅在核对具体包/版本与来源后采用定向例外。来源仅允许 crates.io；git 依赖须明确评审后再加入。
 
-尚待决定：发行打包归档与 OFL-1.1 全文随附；clipboard-win / error-code 的 BSL-1.0、epaint 自带字体的 OFL-1.1 / Ubuntu-font 定向例外核对；ttf-parser 停维护告警的替换或裁剪处置。仓库发行许可已定 AGPL-3.0-only，Inter 字体版本与许可已核对。
+已在 `deny.toml` 做定向例外（非全局放宽）：clipboard-win / error-code → BSL-1.0；epaint_default_fonts → OFL-1.1 / Ubuntu-font-1.0；webpki-roots（ureq 更新检查依赖）→ CDLA-Permissive-2.0；RUSTSEC-2026-0192（ttf-parser 停维护）登记 advisories.ignore 并保留 Wayland 装饰，待上游替换后撤 ignore。
+
+尚待决定：发行打包归档与 OFL-1.1（含 Inter 与 epaint 自带字体）全文随附；ttf-parser 依赖链的上游替换或功能裁剪。仓库发行许可已定 AGPL-3.0-only，Inter 字体版本与许可已核对。
 
 ## 2026-10-14 实测结果
 
@@ -32,4 +34,4 @@ cargo-deny 0.20.2 对当前 Cargo.lock 的检查：bans、sources 通过；licen
 
 上述第三方包的定向许可例外仍待核对许可全文及分发要求；未自动放宽策略。版本重复仅为警告，不是本次失败原因。
 
-advisories 单独联网检查失败（退出码 1）：RUSTSEC-2026-0192 报告 ttf-parser 0.25.1 停止维护，工具未提供安全升级版本。依赖路径为 winit → sctk-adwaita → ab_glyph → owned_ttf_parser → ttf-parser，来自 Linux/Wayland 窗口装饰依赖。Windows 默认目标的 cargo tree 不显示此路径，必须使用 --target all 检查。此结果是停维护告警，不应改述为已证实的可利用漏洞。后续需验证上游替换或功能裁剪方案，未添加 ignore，也未为通过审计而取消 Wayland 功能。
+advisories 单独联网检查失败（退出码 1）：RUSTSEC-2026-0192 报告 ttf-parser 0.25.1 停止维护，工具未提供安全升级版本。依赖路径为 winit → sctk-adwaita → ab_glyph → owned_ttf_parser → ttf-parser，来自 Linux/Wayland 窗口装饰依赖。Windows 默认目标的 cargo tree 不显示此路径，必须使用 --target all 检查。此结果是停维护告警，不应改述为已证实的可利用漏洞。后续需验证上游替换或功能裁剪方案。2026-10-15 起已在 deny.toml advisories.ignore 登记 RUSTSEC-2026-0192（保留 Wayland 装饰，跟踪上游替换后撤 ignore）；未为通过审计而取消 Wayland 功能。

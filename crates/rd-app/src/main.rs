@@ -13,7 +13,7 @@ mod widgets;
 #[cfg(windows)]
 mod win;
 use eframe::egui::{self, Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Vec2};
-use theme::{with_alpha, Theme};
+use theme::{lerp_color, with_alpha, Theme};
 use widgets::{bold, cr, display, font, menu, BtnStyle, Icon};
 
 pub(crate) const PAGE_PADDING_X: f32 = 48.0;
@@ -290,7 +290,8 @@ impl eframe::App for App {
         } else {
             content.top() + 16.0
         };
-        let toggle = Rect::from_center_size(Pos2::new(screen.left() + bx, by), Vec2::splat(28.0));
+        let toggle =
+            Rect::from_center_size(Pos2::new(screen.left() + bx, by), Vec2::new(30.0, 34.0));
         if widgets::icon_button_bold(
             ui,
             toggle,
@@ -308,16 +309,11 @@ impl eframe::App for App {
         {
             self.sidebar = !self.sidebar;
         }
-        widgets::icon_button_bold(
+        share::show(
             ui,
-            toggle.translate(Vec2::new(34.0, 0.0)),
-            Id::new("notifications"),
-            Icon::Bell,
+            Rect::from_center_size(toggle.center() + Vec2::new(34.0, 0.0), Vec2::splat(24.0)),
             &self.theme,
-            true,
-        )
-        .on_hover_text("通知");
-        share::show(ui, toggle.translate(Vec2::new(68.0, 0.0)), &self.theme);
+        );
         #[cfg(windows)]
         win::caption_buttons(ui, screen, &self.theme);
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
@@ -826,7 +822,7 @@ impl App {
     }
 }
 fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &str), t: &Theme) {
-    let (name, sub, _, _) = data;
+    let (name, sub, _, status) = data;
     let id = Id::new(("device", k));
     let resp = ui.interact(rect, id, Sense::click());
     let h = ui
@@ -834,19 +830,28 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
         .animate_bool_with_time(id.with("h"), resp.hovered(), 0.15);
     let p = ui.painter().clone();
     if h > 0.0 {
-        p.rect_filled(rect, cr(4.0), with_alpha(t.surface_hi, h * 0.5));
+        p.rect_filled(rect, cr(8.0), with_alpha(t.surface_hi, h * 0.6));
     }
     let tile = Rect::from_center_size(
         Pos2::new(rect.left() + 18.0, rect.center().y),
         Vec2::splat(36.0),
     );
-    let tc = t.text_dim;
+    p.rect_filled(tile, cr(9.0), with_alpha(t.accent, 0.10 + 0.05 * h));
     widgets::draw_icon(
         &p,
         if k == 0 { Icon::Disk } else { Icon::External },
         tile.shrink(9.0),
-        tc,
+        lerp_color(t.text_dim, t.accent, 0.45),
     );
+    // Status dot pinned to the tile corner, ringed with the row background.
+    let status_c = match status {
+        "在线" | "可用" => t.ok,
+        "等待" => t.warn,
+        _ => t.text_faint,
+    };
+    let dot = Pos2::new(tile.right() - 2.0, tile.bottom() - 2.0);
+    p.circle_filled(dot, 5.5, t.surface);
+    p.circle_filled(dot, 3.5, status_c);
     p.text(
         Pos2::new(tile.right() + 12.0, rect.center().y - 9.0),
         Align2::LEFT_CENTER,
@@ -854,15 +859,25 @@ fn device_row(ui: &mut egui::Ui, rect: Rect, k: usize, data: (&str, &str, f32, &
         bold(13.5),
         t.text,
     );
-    p.text(
-        Pos2::new(tile.right() + 12.0, rect.center().y + 10.0),
-        Align2::LEFT_CENTER,
-        widgets::truncate(&p, sub, &font(11.5), rect.width() * 0.4),
+    let sub_rect = Rect::from_min_size(
+        Pos2::new(tile.right() + 12.0, rect.center().y + 10.0 - 7.0),
+        Vec2::new(rect.width() * 0.4, 14.0),
+    );
+    let g = p.layout_no_wrap(
+        widgets::truncate(&p, sub, &font(11.5), sub_rect.width()),
         font(11.5),
         t.text_dim,
     );
+    p.galley(sub_rect.min, g.clone(), t.text_dim);
+    p.text(
+        Pos2::new(sub_rect.left() + g.size().x + 10.0, rect.center().y + 10.0),
+        Align2::LEFT_CENTER,
+        status,
+        font(11.5),
+        status_c,
+    );
     let btn = Rect::from_min_size(
-        Pos2::new(rect.right() - 12.0 - 64.0, rect.center().y - 15.0),
+        Pos2::new(rect.right() - 64.0, rect.center().y - 15.0),
         Vec2::new(64.0, 30.0),
     );
     widgets::button(

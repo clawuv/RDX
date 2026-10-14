@@ -5,11 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# P2 spike：原生端 WebRTC（str0m）。默认关闭，wasm 侧不会拉入原生依赖。
+# crypto 选纯 Rust 实现保证三平台可移植；平台原生后端（apple-crypto/wincrypto）
+# 由 P2 正式接入时按平台评估。
+webrtc = ["dep:str0m"]
+
 [dependencies]
 rd-protocol.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+bytes.workspace = true
+str0m = { version = "0.24", optional = true, default-features = false, features = ["rust-crypto"] }
 
 [dev-dependencies]
 bytes.workspace = true

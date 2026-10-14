@@ -1,6 +1,8 @@
 # RDX 实施计划
 
-- 状态：执行中（P1 合成视频链路验证；尚未验收）
+- 状态：执行中（P1 macOS 侧收尾完成、Windows/Linux 待验收；P2 spike 已出结论）
+- P2 首周 spike 已完成（2026-10-15）：str0m 0.24（纯 Rust crypto，feature `webrtc` 门控）接入 rd-transport，同步 Rtc+socket 归专用线程、与 tokio 只走 channel 的桥接模式经本机双实例真实 ICE+DTLS+SCTP DataChannel 双向交换验证（4 项测试通过，clippy/wasm 核心边界复验通过）。P2 正式接入待办：Frame 分片/重组规格、平台 crypto 后端评估、会话状态机联动、跨机联调。详见 docs/p2-str0m-spike-2026-10-15.md。
+- P1 macOS 侧验收数据收尾（2026-10-15）：端到端 4 轮受控采样 p50 63.4–66.8ms（100% 配对，按 ADR-0007 口径余量 ~19%）；CPU 预算定为全进程 ≤0.5 逻辑核均值，实测 0.28–0.29 核达标；真屏轮 RSS ≈953MB 与历史样本差异悬殊，登记为内存预算核查项。Windows 实机回归无可达主机（SSH 清单仅无桌面 Ubuntu），Linux X11 未接入——P1 整体验收仍开放。
 - 延迟预算口径已定（ADR-0007，2026-10-14 代拟可推翻）：v1 以“捕获到上屏（内容观测法）p50<80ms”为 P1 退出标准，工程内控“捕获→GPU 完成 p95<50ms”（release 现测 41.3/46.2ms 达标）；呈现侧优化登记为 v1 后项。依据：内容归因端到端 release 66.8ms p50（531/531 配对），瓶颈在合成/呈现链（≈58ms）而非软编软解（8.75ms）。详见 docs/adr/0007 与 docs/p1-macos-2026-10-14.md。
 - P1 验收前置收尾：管道停止提示运行中检查通过（非法显示器索引触发，红色提示+占位文本，截屏验证）；1080p30 回环 demo 录屏已生成（target/p1-demo-macos.mov，构建产物）。新口径下 macOS 侧数字指标已满足（66.8<80ms；内控 46.2<50ms），P1 整体验收仍待：CPU 占用预算量化定义、Windows 实机回归、受控多次采样统计——完成前不宣布 P1 通过。
 - 端到端复测与收尾（release）：内容归因指纹端到端 531/531 全配对——图案发布→解码上传 p50/p95=66.8/82.1ms；编解码管道 8.75/10.96ms，呈现+采集链 ≈58ms（present_probe 交叉验证 49.5–50.3ms）。按"捕获到上屏 <50ms"定义现状 p50≈49–67ms，临界至超出；瓶颈在合成/呈现链而非软编软解。受控遮挡复测确认：定位窗口完全覆盖时 draw=0 而 logic≈60/s，解除即刻恢复，管道全程不受影响。Inter 字体核对为 v4.001（上游 SIL OFL-1.1，与 AGPL 兼容，发行须附 OFL 全文）。待决策：(a) 立项呈现侧优化后复验，或 (b) v1 放宽至 p50<80ms、以捕获→GPU 完成（release p50 41.3/p95 46.2ms）为内控。详见 docs/p1-macos-2026-10-14.md。
@@ -97,12 +99,14 @@ rd/  （实际目录名 RDX）
 - 捕获：先做 Windows DXGI（脏矩形信息最全）+ macOS ScreenCaptureKit；Linux 先 X11（xcb damage），Wayland 排 P2。
 - 编码：openh264 软编起步（基线永远可用），硬编按 MF / VideoToolbox / VAAPI 顺序接入；解码软解起步。
 - egui 渲染（本项目最关键的技术点）：解码输出保持 NV12/I420，用 `egui_wgpu` 的 `CallbackTrait` 挂自定义 wgpu pass，YUV→RGB 在 shader 里做，CPU 侧零转换；纹理用 `Queue::write_texture` 上传；解码线程到 UI 用帧到达事件驱动 `ctx.request_repaint()`。
-- **退出标准**（ADR-0007 调整）：1080p30 端到端延迟（捕获到上屏，内容观测法）p50 < 80ms，工程内控“捕获→GPU 完成”p95 < 50ms，CPU 占用可接受；回环 demo 录屏。
+- **退出标准**（ADR-0007 调整）：1080p30 端到端延迟（捕获到上屏，内容观测法）p50 < 80ms，工程内控"捕获→GPU 完成"p95 < 50ms，全进程 CPU ≤ 0.5 逻辑核均值（user+sys/wall）；回环 demo 录屏。
 - 延迟需用同一参考设备、固定分辨率/帧率和可复现素材测量；分别记录捕获、编码、上传、解码、呈现耗时及 p50/p95，不能只凭录屏观感验收。测试需至少覆盖软编基线和实际 GPU 上传路径。
 - 该阶段先验证 GPU 帧互操作与真实纹理上传；“解码输出 NV12/I420”不等于硬件解码帧可零拷贝上传。若必须下载到 CPU，记录拷贝次数、带宽与 p95 延迟，并据此重估后续跨平台工作量。
 - **风险**：egui/wgpu 版本 API 变动（钉版本）；若 `CallbackTrait` 路径受阻，降级方案是 `TextureHandle` + CPU 转 RGB（慢但能跑），不阻塞后续阶段。
 
 ### P2：双端 + 传输层（6 周）
+
+首周 spike 已出结论（2026-10-15）：str0m 桥接模式可行，rd-transport 已含 feature 门控的 `Str0mTransport` 与进程内 `connect_pair` 测试设施，见 [str0m spike 记录](docs/p2-str0m-spike-2026-10-15.md)。P1 未整体验收（Windows 回归、Linux X11 待做），P2 其余工作在 P1 收口后推进。
 
 拆出受控端/控制端两个角色（同一二进制的两种模式），引入 `rd-engine` 的会话 actor。
 
