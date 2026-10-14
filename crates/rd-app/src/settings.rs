@@ -103,7 +103,7 @@ impl Settings {
                                     .font(font(11.5))
                                     .color(theme.text_dim),
                                 );
-                                ui.separator();
+                                soft_separator(ui, theme);
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         ui.label(egui::RichText::new("显示侧栏").font(bold(13.0)));
@@ -120,7 +120,7 @@ impl Settings {
                                         },
                                     );
                                 });
-                                ui.separator();
+                                soft_separator(ui, theme);
                                 ui.label(egui::RichText::new("界面缩放").font(bold(13.0)));
                                 ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().slider_width =
@@ -334,6 +334,17 @@ fn theme_choice(
     }
 }
 /// Flat sections use typography and hairlines instead of enclosing cards.
+/// Hairline divider, noticeably softer than egui's stock separator stroke.
+fn soft_separator(ui: &mut egui::Ui, theme: &Theme) {
+    use egui::{Sense, Stroke};
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 6.0), Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        Stroke::new(1.0, theme::with_alpha(theme.stroke, 0.8)),
+    );
+}
+
 fn section(
     ui: &mut egui::Ui,
     title: &str,
@@ -351,7 +362,7 @@ fn section(
             .font(font(11.5))
             .color(theme.text_dim),
     );
-    ui.separator();
+    soft_separator(ui, theme);
     ui.add_space(4.0);
     body(ui);
 }

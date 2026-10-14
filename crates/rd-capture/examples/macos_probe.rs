@@ -58,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("no frames during continuous sample".into());
         }
         ages.sort_by(f64::total_cmp);
+        println!("capture diagnostics: {:?}", capture.diagnostics());
         let percentile = |p: f64| ages[((ages.len() - 1) as f64 * p).round() as usize];
         println!("capture sample: {}x{}, frames={}, elapsed={:.2}s, fps={:.2}, timeouts={}, callback_to_consumer_age_p50/p95={:.2}/{:.2}ms",
             capture.info().width, capture.info().height, ages.len(), start.elapsed().as_secs_f64(),

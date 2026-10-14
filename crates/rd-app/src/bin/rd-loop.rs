@@ -5,7 +5,7 @@
 //! 管道线程每 5 秒向 stderr 输出一次 p50/p95 汇总（无头验证用）。
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rd_app::pipeline::{self, LoopFrame, PipelineConfig};
 use rd_app::stats::{RenderCounters, Samples};
@@ -13,6 +13,20 @@ use rd_app::video::{VideoShared, YuvPaintCallback};
 use tokio::sync::watch;
 
 fn main() -> eframe::Result<()> {
+    let duration = match std::env::var("RDX_LOOP_SECONDS") {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(seconds @ 1..=120) => Some(Duration::from_secs(seconds)),
+            _ => {
+                eprintln!("RDX_LOOP_SECONDS must be 1..120");
+                return Ok(());
+            }
+        },
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => {
+            eprintln!("invalid RDX_LOOP_SECONDS");
+            return Ok(());
+        }
+    };
     let options = eframe::NativeOptions {
         wgpu_options: rd_app::wgpu_configuration(),
         viewport: egui::ViewportBuilder::default()
@@ -23,14 +37,19 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "RDX P1 Loopback",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             let shared = cc.wgpu_render_state.as_ref().map(VideoShared::new);
-            Ok(Box::new(LoopApp::new(cc.egui_ctx.clone(), shared)))
+            let mut app = LoopApp::new(cc.egui_ctx.clone(), shared);
+            app.duration = duration;
+            Ok(Box::new(app))
         }),
     )
 }
 
 struct LoopApp {
+    started: Instant,
+    duration: Option<Duration>,
+    summary_reported: bool,
     pipeline_stopped: bool,
     receiver: watch::Receiver<Option<LoopFrame>>,
     shared: Option<Arc<VideoShared>>,
@@ -56,6 +75,9 @@ impl LoopApp {
             ctx,
         );
         Self {
+            started: Instant::now(),
+            duration: None,
+            summary_reported: false,
             pipeline_stopped: false,
             receiver,
             shared,
@@ -140,6 +162,23 @@ impl LoopApp {
 
 impl eframe::App for LoopApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self
+            .duration
+            .is_some_and(|limit| self.started.elapsed() >= limit)
+        {
+            if !self.summary_reported {
+                let counts = self
+                    .shared
+                    .as_ref()
+                    .map(|s| s.counters())
+                    .unwrap_or_default();
+                eprintln!("rdx bounded summary: elapsed={:.2}s uploads={} draws={} unique_draws={} superseded={} pipeline_stopped={} rolling_upload_p50/p95={:.2}/{:.2}ms (not GPU completion/presentation)",
+                    self.started.elapsed().as_secs_f64(), counts.uploads, counts.draws, counts.unique_draws, counts.superseded, self.pipeline_stopped, self.e2e_ms.percentile(0.5), self.e2e_ms.percentile(0.95));
+                self.summary_reported = true;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         self.logic_ticks += 1;
         self.drain_pipeline();
         self.upload_latest();
@@ -202,6 +241,9 @@ mod acceptance_tests {
 
     fn app(receiver: watch::Receiver<Option<LoopFrame>>) -> LoopApp {
         LoopApp {
+            started: Instant::now(),
+            duration: None,
+            summary_reported: false,
             pipeline_stopped: false,
             receiver,
             shared: None,

@@ -4,10 +4,14 @@
 //! 下游（openh264 编码、GPU 渲染）保持单一平面格式。
 //! 需要 Screen Recording 权限（TCC）；超时不单独视为权限被拒绝。
 
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use screencapturekit::cm::CMSampleBufferExt;
 use screencapturekit::cv::CVPixelBufferLockGuard;
 use screencapturekit::prelude::{
@@ -21,6 +25,7 @@ use crate::{CaptureError, CaptureInfo, CapturedFrame, Capturer, PixelFormat};
 /// 已转为 I420 的一帧（在 SC 回调线程上完成拷贝与转换）。
 #[derive(Clone)]
 struct RawFrame {
+    sequence: u64,
     width: u32,
     height: u32,
     data: Bytes,
@@ -28,6 +33,7 @@ struct RawFrame {
 }
 
 struct OutputForwarder {
+    counters: Arc<CallbackCounters>,
     sender: watch::Sender<Option<RawFrame>>,
     origin: Instant,
 }
@@ -37,15 +43,21 @@ impl SCStreamOutputTrait for OutputForwarder {
         if !matches!(output_type, SCStreamOutputType::Screen) {
             return;
         }
+        self.counters.callbacks.fetch_add(1, Ordering::Relaxed);
         let Some(buffer) = sample.pixel_buffer() else {
             return;
         };
         let Ok(guard) = buffer.lock_read_only() else {
             return;
         };
-        let frame = convert_nv12_to_i420(&guard, self.origin);
+        let start = Instant::now();
+        let mut frame = convert_nv12_to_i420(&guard, self.origin);
+        self.counters
+            .conversion_us
+            .fetch_add(start.elapsed().as_micros() as u64, Ordering::Relaxed);
         drop(guard);
         if frame.width != 0 {
+            frame.sequence = self.counters.published.fetch_add(1, Ordering::Relaxed) + 1;
             self.sender.send_replace(Some(frame));
         }
     }
@@ -55,6 +67,7 @@ impl SCStreamOutputTrait for OutputForwarder {
 fn convert_nv12_to_i420(guard: &CVPixelBufferLockGuard<'_>, origin: Instant) -> RawFrame {
     let timestamp_us = origin.elapsed().as_micros() as u64;
     let empty = || RawFrame {
+        sequence: 0,
         width: 0,
         height: 0,
         data: Bytes::new(),
@@ -83,28 +96,26 @@ fn convert_nv12_to_i420(guard: &CVPixelBufferLockGuard<'_>, origin: Instant) -> 
         return empty();
     };
 
-    let mut out = BytesMut::with_capacity(w * h * 3 / 2);
+    let mut out = vec![0; w * h * 3 / 2];
+    let (y_out, chroma) = out.split_at_mut(w * h);
+    let (u_out, v_out) = chroma.split_at_mut(w * h / 4);
     // SAFETY: the read-only guard keeps both planes locked. Their row strides
     // and heights were checked above, so each row slice remains within a plane.
     unsafe {
         for row in 0..h {
             let src = std::slice::from_raw_parts(y_base.add(row * y_bpr), w);
-            out.extend_from_slice(src);
+            y_out[row * w..(row + 1) * w].copy_from_slice(src);
         }
         // UV 平面行距按字节计，每行 w 字节 = w/2 个 (U,V) 对；去交织成平面 U、V。
-        let half_h = h / 2;
-        let uv_rows: Vec<&[u8]> = (0..half_h)
-            .map(|row| std::slice::from_raw_parts(uv_base.add(row * uv_bpr), w))
-            .collect();
-        for row in &uv_rows {
-            out.extend(row.iter().step_by(2).copied());
-        }
-        for row in &uv_rows {
-            out.extend(row.iter().skip(1).step_by(2).copied());
+        for row in 0..h / 2 {
+            let src = std::slice::from_raw_parts(uv_base.add(row * uv_bpr), w);
+            let range = row * (w / 2)..(row + 1) * (w / 2);
+            split_uv_row(src, &mut u_out[range.clone()], &mut v_out[range]);
         }
     }
 
     RawFrame {
+        sequence: 0,
         width: w as u32,
         height: h as u32,
         data: Bytes::from(out),
@@ -112,8 +123,36 @@ fn convert_nv12_to_i420(guard: &CVPixelBufferLockGuard<'_>, origin: Instant) -> 
     }
 }
 
+/// One pass over interleaved UV, without per-byte buffer growth or row allocations.
+fn split_uv_row(source: &[u8], u: &mut [u8], v: &mut [u8]) {
+    assert_eq!(source.len(), u.len() * 2);
+    assert_eq!(u.len(), v.len());
+    for ((pair, u), v) in source.chunks_exact(2).zip(u).zip(v) {
+        *u = pair[0];
+        *v = pair[1];
+    }
+}
+
 /// SCStream implements Send in the upstream binding; no local unsafe assertion.
 struct StreamHandle(SCStream);
+
+#[derive(Default)]
+struct CallbackCounters {
+    callbacks: AtomicU64,
+    published: AtomicU64,
+    conversion_us: AtomicU64,
+}
+
+/// Snapshot within the current stream generation; callback totals may advance concurrently.
+#[derive(Debug)]
+pub struct CaptureDiagnostics {
+    pub callbacks: u64,
+    pub published: u64,
+    pub consumed: u64,
+    /// Exact sequence gaps observed by the consumer, excluding any unread final frame.
+    pub skipped_before_read: u64,
+    pub conversion_total_us: u64,
+}
 
 fn matching_display(ids: &[u32], wanted: u32) -> Result<usize, CaptureError> {
     let mut matches = ids.iter().enumerate().filter(|(_, id)| **id == wanted);
@@ -125,6 +164,10 @@ fn matching_display(ids: &[u32], wanted: u32) -> Result<usize, CaptureError> {
 }
 
 pub struct MacScreenCapturer {
+    counters: Arc<CallbackCounters>,
+    consumed: u64,
+    last_sequence: u64,
+    skipped: u64,
     info: CaptureInfo,
     receiver: watch::Receiver<Option<RawFrame>>,
     stream: Option<StreamHandle>,
@@ -135,6 +178,15 @@ pub struct MacScreenCapturer {
 }
 
 impl MacScreenCapturer {
+    pub fn diagnostics(&self) -> CaptureDiagnostics {
+        CaptureDiagnostics {
+            callbacks: self.counters.callbacks.load(Ordering::Relaxed),
+            published: self.counters.published.load(Ordering::Relaxed),
+            consumed: self.consumed,
+            skipped_before_read: self.skipped,
+            conversion_total_us: self.counters.conversion_us.load(Ordering::Relaxed),
+        }
+    }
     /// 显式选择本次枚举的显示器索引，按 max_width 限制宽度并保持纵横比。
     pub fn new(
         display_index: usize,
@@ -203,9 +255,14 @@ impl MacScreenCapturer {
             .map_err(|e| CaptureError::Other(e.into()))?;
 
         let (tx, rx) = watch::channel(None);
+        let counters = Arc::new(CallbackCounters::default());
         stream
             .add_output_handler(
-                OutputForwarder { sender: tx, origin },
+                OutputForwarder {
+                    sender: tx,
+                    origin,
+                    counters: Arc::clone(&counters),
+                },
                 SCStreamOutputType::Screen,
             )
             .map_err(|e| CaptureError::Unavailable(format!("add_output_handler: {e:?}")))?;
@@ -214,6 +271,10 @@ impl MacScreenCapturer {
             .map_err(|e| CaptureError::Unavailable(format!("start_capture: {e:?}")))?;
 
         Ok(Self {
+            counters,
+            consumed: 0,
+            last_sequence: 0,
+            skipped: 0,
             info: CaptureInfo {
                 width: w,
                 height: h,
@@ -282,6 +343,9 @@ impl Capturer for MacScreenCapturer {
         if latest.width != self.info.width || latest.height != self.info.height {
             return Err(CaptureError::DisplayChanged);
         }
+        self.skipped += latest.sequence.saturating_sub(self.last_sequence + 1);
+        self.last_sequence = latest.sequence;
+        self.consumed += 1;
         Ok(CapturedFrame {
             width: latest.width,
             height: latest.height,
@@ -304,11 +368,34 @@ impl Drop for MacScreenCapturer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn uv_split_preserves_channels_and_row_boundaries() {
+        for width in [2, 4, 30, 1920] {
+            let source: Vec<u8> = (0..width).map(|n| (n % 251) as u8).collect();
+            let mut u = vec![255; width / 2];
+            let mut v = vec![255; width / 2];
+            split_uv_row(&source, &mut u, &mut v);
+            assert_eq!(u, source.iter().step_by(2).copied().collect::<Vec<_>>());
+            assert_eq!(
+                v,
+                source
+                    .iter()
+                    .skip(1)
+                    .step_by(2)
+                    .copied()
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
     fn capture() -> (watch::Sender<Option<RawFrame>>, MacScreenCapturer) {
         let (tx, receiver) = watch::channel(None);
         (
             tx,
             MacScreenCapturer {
+                counters: Arc::new(CallbackCounters::default()),
+                consumed: 0,
+                last_sequence: 0,
+                skipped: 0,
                 info: CaptureInfo {
                     width: 2,
                     height: 2,
@@ -326,6 +413,7 @@ mod tests {
     }
     fn frame(timestamp_us: u64) -> RawFrame {
         RawFrame {
+            sequence: timestamp_us / 100,
             width: 2,
             height: 2,
             data: Bytes::from_static(&[0; 6]),
@@ -358,6 +446,8 @@ mod tests {
         tx.send_replace(Some(frame(100)));
         tx.send_replace(Some(frame(200)));
         assert_eq!(capture.next_frame().await.unwrap().timestamp_us, 200);
+        assert_eq!(capture.diagnostics().consumed, 1);
+        assert_eq!(capture.diagnostics().skipped_before_read, 1);
         assert!(matches!(
             capture.next_frame().await,
             Err(CaptureError::Timeout)

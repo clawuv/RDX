@@ -499,7 +499,7 @@ impl App {
         let pager = Rect::from_min_size(Pos2::new(x, pager_top), Vec2::new(w, 52.0));
         ui.painter().line_segment(
             [pager.left_top(), pager.right_top()],
-            Stroke::new(1.0, with_alpha(t.stroke, 0.65)),
+            Stroke::new(1.0, with_alpha(t.stroke, 0.4)),
         );
         let controls_top = pager.top() + 20.0;
         let center_y = controls_top + 14.0;
@@ -608,7 +608,7 @@ impl App {
                         if position + 1 < end {
                             ui.painter().line_segment(
                                 [row.left_bottom(), row.right_bottom()],
-                                Stroke::new(1.0, with_alpha(t.stroke, 0.65)),
+                                Stroke::new(1.0, with_alpha(t.stroke, 0.4)),
                             );
                         }
                     }
