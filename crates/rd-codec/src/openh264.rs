@@ -4,7 +4,7 @@
 //! 回环管道的专用运行时线程上使用。真实会话接入时再评估 spawn_blocking。
 
 use bytes::{Bytes, BytesMut};
-use openh264::formats::YUVSource as _;
+use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource as _};
 use openh264::{
     decoder::{Decoder as H264Decoder, DecoderConfig as H264DecoderConfig},
     encoder::{
@@ -52,7 +52,15 @@ fn split_i420(frame: &CapturedFrame) -> Result<I420Ref<'_>, CodecError> {
         )));
     }
     let (w, h) = (frame.width as usize, frame.height as usize);
-    let y_len = w * h;
+    if w == 0 || h == 0 || !w.is_multiple_of(2) || !h.is_multiple_of(2) {
+        return Err(CodecError::Malformed(
+            "I420 requires nonzero even dimensions".into(),
+        ));
+    }
+    let y_len = w
+        .checked_mul(h)
+        .filter(|n| n.checked_add(n / 2).is_some())
+        .ok_or_else(|| CodecError::Malformed("I420 dimensions overflow".into()))?;
     let uv_len = (w / 2) * (h / 2);
     if frame.data.len() < y_len + 2 * uv_len {
         return Err(CodecError::Malformed(format!(
@@ -75,6 +83,7 @@ pub struct OpenH264Encoder {
     config: EncoderConfig,
     encoder: H264Encoder,
     keyframe_requested: bool,
+    bgra_yuv: Option<YUVBuffer>,
 }
 
 impl OpenH264Encoder {
@@ -86,6 +95,7 @@ impl OpenH264Encoder {
             encoder: build_encoder(config)?,
             config,
             keyframe_requested: false,
+            bgra_yuv: None,
         })
     }
 }
@@ -125,11 +135,37 @@ impl Encoder for OpenH264Encoder {
             self.encoder.force_intra_frame();
             self.keyframe_requested = false;
         }
-        let source = split_i420(frame)?;
-        let stream = self
-            .encoder
-            .encode(&source)
-            .map_err(|e| CodecError::Malformed(e.to_string()))?;
+        let stream = match frame.format {
+            PixelFormat::Bgra8 => {
+                let (w, h) = (frame.width as usize, frame.height as usize);
+                let expected = w.checked_mul(h).and_then(|n| n.checked_mul(4));
+                if w == 0
+                    || h == 0
+                    || !w.is_multiple_of(2)
+                    || !h.is_multiple_of(2)
+                    || expected != Some(frame.data.len())
+                {
+                    return Err(CodecError::Malformed(
+                        "BGRA requires packed data and nonzero even dimensions".into(),
+                    ));
+                }
+                if self
+                    .bgra_yuv
+                    .as_ref()
+                    .is_none_or(|b| b.dimensions() != (w, h))
+                {
+                    self.bgra_yuv = Some(YUVBuffer::new(w, h));
+                }
+                let yuv = self
+                    .bgra_yuv
+                    .as_mut()
+                    .expect("conversion buffer initialized");
+                yuv.read_bgra8(BgraSliceU8::new(&frame.data, (w, h)));
+                self.encoder.encode(yuv)
+            }
+            _ => self.encoder.encode(&split_i420(frame)?),
+        }
+        .map_err(|e| CodecError::Malformed(e.to_string()))?;
         let keyframe = matches!(stream.frame_type(), FrameType::IDR | FrameType::I);
         Ok(vec![EncodedPacket {
             keyframe,
@@ -253,7 +289,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_non_i420_input() {
+    async fn rejects_unsupported_nv12_input() {
         let mut encoder = OpenH264Encoder::new(EncoderConfig {
             codec: CodecId::H264,
             bitrate_kbps: 2000,
@@ -262,10 +298,77 @@ mod tests {
         })
         .unwrap();
         let mut frame = test_frame(0);
-        frame.format = PixelFormat::Bgra8;
+        frame.format = PixelFormat::Nv12;
         assert!(matches!(
             encoder.encode(&frame).await,
             Err(CodecError::Malformed(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod bgra_tests {
+    use super::*;
+    #[tokio::test]
+    async fn padded_bgra_encodes_decodes_and_resizes() {
+        let mut encoder = OpenH264Encoder::new(EncoderConfig {
+            codec: CodecId::H264,
+            bitrate_kbps: 2000,
+            framerate: 30,
+            keyframe_interval: 30,
+        })
+        .unwrap();
+        let mut decoder = OpenH264Decoder::new().unwrap();
+        for (width, height, color, y_expected, u_expected, v_expected) in [
+            (128, 96, [0, 0, 255, 255], 82, 90, 240),
+            (64, 64, [255, 0, 0, 255], 41, 240, 110),
+        ] {
+            let pitch = width as usize * 4 + 16;
+            let mut pixels = vec![77; pitch * height as usize];
+            for row in pixels.chunks_mut(pitch) {
+                for pixel in row[..width as usize * 4].chunks_mut(4) {
+                    pixel.copy_from_slice(&color);
+                }
+            }
+            let frame = CapturedFrame::from_bgra_rows(width, height, pitch, &pixels, 123).unwrap();
+            let packets = encoder.encode(&frame).await.unwrap();
+            let decoded = decoder.decode(&packets[0]).await.unwrap();
+            assert_eq!(
+                (decoded.width, decoded.height, decoded.timestamp_us),
+                (width, height, 123)
+            );
+            let y_len = (width * height) as usize;
+            for (actual, expected) in [
+                (decoded.data[0], y_expected),
+                (decoded.data[y_len], u_expected),
+                (decoded.data[y_len + y_len / 4], v_expected),
+            ] {
+                assert!(
+                    (actual as i32 - expected).abs() <= 5,
+                    "actual={actual} expected={expected}"
+                );
+            }
+        }
+    }
+    #[tokio::test]
+    async fn malformed_bgra_returns_error() {
+        let mut encoder = OpenH264Encoder::new(EncoderConfig {
+            codec: CodecId::H264,
+            bitrate_kbps: 2000,
+            framerate: 30,
+            keyframe_interval: 30,
+        })
+        .unwrap();
+        for (width, height, len) in [(0, 2, 0), (3, 2, 24), (2, 2, 15)] {
+            let frame = CapturedFrame {
+                width,
+                height,
+                format: PixelFormat::Bgra8,
+                data: vec![0; len].into(),
+                damage: vec![],
+                timestamp_us: 0,
+            };
+            assert!(encoder.encode(&frame).await.is_err());
+        }
     }
 }

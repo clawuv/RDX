@@ -4,3 +4,17 @@
 pub mod pipeline;
 pub mod stats;
 pub mod video;
+
+/// Shared renderer setup for the desktop shell and the video loopback.
+/// Avoid initializing older Intel Vulkan drivers on Windows: they can crash
+/// inside native driver code before wgpu can return an adapter error.
+pub fn wgpu_configuration() -> egui_wgpu::WgpuConfiguration {
+    #[allow(unused_mut)]
+    let mut config = egui_wgpu::WgpuConfiguration::default();
+    #[cfg(windows)]
+    if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
+        setup.instance_descriptor.backends =
+            wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12);
+    }
+    config
+}

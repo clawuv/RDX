@@ -24,11 +24,22 @@ pub struct SyntheticCapturer {
     info: CaptureInfo,
     interval: Duration,
     frame_index: u64,
-    started: Instant,
+    next_frame_at: Instant,
+    clock_origin: Instant,
 }
 
 impl SyntheticCapturer {
     pub fn new(width: u32, height: u32, framerate: u32) -> Self {
+        Self::with_clock_origin(width, height, framerate, Instant::now())
+    }
+
+    /// Use the same monotonic origin as the pipeline and renderer.
+    pub fn with_clock_origin(
+        width: u32,
+        height: u32,
+        framerate: u32,
+        clock_origin: Instant,
+    ) -> Self {
         Self {
             info: CaptureInfo {
                 width,
@@ -38,7 +49,8 @@ impl SyntheticCapturer {
             },
             interval: Duration::from_secs_f64(1.0 / framerate as f64),
             frame_index: 0,
-            started: Instant::now(),
+            next_frame_at: Instant::now(),
+            clock_origin,
         }
     }
 }
@@ -50,15 +62,12 @@ impl Capturer for SyntheticCapturer {
     }
 
     async fn next_frame(&mut self) -> Result<CapturedFrame, CaptureError> {
-        // 按固定节拍出帧：帧 i 的目标时刻 = started + i * interval。
-        let due = self
-            .interval
-            .checked_mul(self.frame_index as u32)
-            .unwrap_or(Duration::ZERO);
-        let now = self.started.elapsed();
-        if now < due {
-            tokio::time::sleep(due - now).await;
+        let now = Instant::now();
+        if now < self.next_frame_at {
+            tokio::time::sleep(self.next_frame_at - now).await;
         }
+        // Rebase missed deadlines: never burst overdue frames after a stall.
+        self.next_frame_at = next_deadline(self.next_frame_at, Instant::now(), self.interval);
         self.frame_index += 1;
         Ok(self.render(self.frame_index - 1))
     }
@@ -66,6 +75,7 @@ impl Capturer for SyntheticCapturer {
 
 impl SyntheticCapturer {
     fn render(&self, frame: u64) -> CapturedFrame {
+        let timestamp_us = self.clock_origin.elapsed().as_micros() as u64;
         let (w, h) = (self.info.width as usize, self.info.height as usize);
         let (cw, ch) = (w / 2, h / 2);
         let bar_width = w / BARS.len();
@@ -122,8 +132,17 @@ impl SyntheticCapturer {
             format: PixelFormat::I420,
             data: Bytes::from(buf),
             damage: Vec::new(), // 整帧刷新
-            timestamp_us: self.started.elapsed().as_micros() as u64,
+            timestamp_us,
         }
+    }
+}
+
+fn next_deadline(previous: Instant, now: Instant, interval: Duration) -> Instant {
+    let scheduled = previous + interval;
+    if scheduled <= now {
+        now + interval
+    } else {
+        scheduled
     }
 }
 
@@ -131,8 +150,28 @@ impl SyntheticCapturer {
 mod tests {
     use super::*;
 
+    #[test]
+    fn missed_deadlines_do_not_burst() {
+        let start = Instant::now();
+        let interval = Duration::from_millis(33);
+        assert_eq!(next_deadline(start, start, interval), start + interval);
+        let resumed = start + Duration::from_secs(10);
+        assert_eq!(next_deadline(start, resumed, interval), resumed + interval);
+    }
+
     fn black_box_size(w: u32, h: u32) -> usize {
         (w * h * 3 / 2) as usize
+    }
+
+    #[tokio::test]
+    async fn timestamps_use_shared_origin() {
+        let origin = Instant::now() - Duration::from_secs(2);
+        let mut capturer = SyntheticCapturer::with_clock_origin(320, 180, 30, origin);
+        let before = origin.elapsed().as_micros() as u64;
+        let frame = capturer.next_frame().await.unwrap();
+        let after = origin.elapsed().as_micros() as u64;
+        assert!((before..=after).contains(&frame.timestamp_us));
+        assert!(frame.timestamp_us >= 2_000_000);
     }
 
     #[tokio::test]

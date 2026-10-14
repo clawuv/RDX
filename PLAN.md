@@ -1,10 +1,17 @@
 # RDX 实施计划
 
-- 状态：执行中（P1 第一步完成）
-- P0：工程项本地完成（构建绿 / 测试全过 / clippy 无警告 / 核心 crate wasm 编译通过）；能力矩阵与威胁模型为草案待评审；Linux+Windows CI 待首推远端确认。
-- P1 进度（2026-10-14）：**合成源回环垂直切片已跑通**——`cargo run -p rd-app --bin rd-loop`：合成捕获 → openh264 软编/软解 → egui/wgpu YUV 渲染。实测（M 系列 Mac，debug 构建，720p30）：编码 p50/p95 = 2.6/3.0ms，解码 = 2.1/2.4ms，端到端（捕获→上屏）= **6.1/6.8ms**（前台窗口），稳定 30fps——远优于 50ms 门槛，两大风险点（egui/wgpu 视频路径、openh264 集成）验证通过。
-- P1 进度（2026-10-14，二）：**ScreenCaptureKit 捕获后端已接入**（`rd-loop --screen`）——`MacScreenCapturer`（420v/NV12 → 捕获边界去交织为 I420，SC 回调线程→定长通道→拉取端取最新），选型 `screencapturekit` v11（MIT，swift-bridge，macOS 构建需 Xcode/CLT；Swift 运行时 rpath 由 `.cargo/config.toml` 统一注入）。无 Screen Recording 权限时表现为显示器列表为空，已实现带指引的报错与合成源回退（已实测）。**剩余**：授权后真机帧数据验证（需用户在系统设置授予屏幕录制权限）、硬编路径与 GPU 帧互操作验证、release 构建复测；另记录一个待查项——后台/失焦窗口下 e2e 呈现 ~60ms（约 2 帧间隔的稳定相位偏移，编解码耗时不变，疑为呈现节流/拾取相位，需在前台窗口 + 真实捕获下复测）。
-- 许可证：已定为 **MIT**（`LICENSE`）；为此移除了 AGPL 来源的 UI 壳（备份于仓库外 `../RDX-agpl-ui-backup/`），AGPL/GPL 依赖由 `deny.toml` 白名单机制禁止。git 历史中仍残留该 UI 代码（公开仓库），处理选项待定：接受历史保留（HEAD 已干净）或重写历史后强推。
+- 状态：执行中（P1 合成视频链路验证；尚未验收）
+- DXGI 后续：已实现有上限的显示失效重建、原输出匹配和编解码器重置；本机主动资源重建取帧通过，19 项相关测试通过。真实显示配置变化及恢复画面验收仍待完成。
+- Windows DXGI 基线已接入：双屏枚举与单帧实测成功，回环可通过 RDX_CAPTURE_DISPLAY 选择来源；自动失效重建、指针合成及真屏连续性能验收待完成，见 docs/p1-dxgi-2026-10-14.md。
+- 按用户继续开发指示，推进 DXGI 前置 BGRA 路径：支持带 row pitch 的帧紧缩、BGRA→I420 软编及分辨率变化；不代表 DXGI 采集已实现，上一轮交互验收缺项仍保留。
+- 再次验收：补齐 3 项停帧/关闭回归测试并修复最后一帧丢失；恢复后的界面文本已读到。视觉及受控最小化对比仍受窗口工具错误阻塞，尚未全项通过。
+- 当前先验收：统计功能测试、构建、clippy 与运行日志已验证；截图超时，前台/最小化对比及停止状态交互检查待补，暂停推进 DXGI。见 docs/p1-render-counters-2026-10-14.md。
+- P1 后续开发：回环新增 logic / upload / draw / unique_draw 统计与上传后未绘制即覆盖计数；无新帧时也更新上传速率。CPU 绘制回调不等同 GPU 完成或上屏，真实捕获与性能验收仍待完成。
+- 2026-10-14 P0 补齐：本机 25 项测试、严格 clippy 与三核心 crate wasm 编译通过；已补 CI 依赖审查及平台/认证范围文档。cargo-deny 的 bans/sources 通过，licenses/advisories 失败；当前提交三平台 CI、安全评审及许可决策仍待完成，详见 docs/p0-audit-2026-10-14.md。
+- P1：合成捕获、H.264 软编软解、GPU I420 上传与渲染已实现；真实 DXGI / ScreenCaptureKit / X11 捕获、硬编互操作、真实上屏延迟测量与录屏未完成。
+- 历史 720p Mac 数据仅保留为早期观察：发现捕获器与 UI 时间戳起点不同，且测量截止点是上传提交而非呈现，因此不再用于 <50ms 端到端验收。
+- 本轮开发：修复时钟起点、解码分段计时、无界视频队列及 clippy；回环提升至 1920×1080@30、8Mbps，继续留在 P1。
+- 复核记录：[2026-10-14 阶段验证](docs/validation-2026-10-14.md)。
 - 制定日期：2026-10-13
 - 架构决策记录：[docs/adr/](docs/adr/)
 - 参考对象：RustDesk（经验与教训来源，见 ADR 各篇 Context）
@@ -31,7 +38,7 @@ rd/  （实际目录名 RDX）
 │   ├── rd-capture/         # 捕获 trait；dxgi / x11+damage / pipewire / screencapturekit
 │   ├── rd-input/           # 注入 trait；SendInput / CGEvent / uinput+XTest
 │   ├── rd-engine/          # 会话 actor、状态机、QoS、权限（纯逻辑，headless 可测）
-│   ├── rd-crypto/          # opaque-ke 认证 + snow(Noise) 会话加密
+│   ├── rd-crypto/          # MVP 设备配对 + Noise（待评审）；OPAQUE 后续
 │   ├── rd-broker/          # 特权能力代理：daemon + IPC + 安装器
 │   ├── rd-audio/           # cpal 采集/播放 + opus
 │   ├── rd-app/             # egui 应用（唯一二进制）

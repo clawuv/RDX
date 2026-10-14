@@ -71,6 +71,7 @@ pub struct VideoShared {
 }
 
 struct VideoInner {
+    counters: crate::stats::RenderCounters,
     pipeline: RenderPipeline,
     layout: BindGroupLayout,
     sampler: Sampler,
@@ -142,6 +143,7 @@ impl VideoShared {
 
         Arc::new(Self {
             inner: Mutex::new(VideoInner {
+                counters: crate::stats::RenderCounters::default(),
                 pipeline,
                 layout,
                 sampler,
@@ -214,6 +216,19 @@ impl VideoShared {
         write_plane(&queue, &y, y_rows, w as u32);
         write_plane(&queue, &u, u_rows, (w / 2) as u32);
         write_plane(&queue, &v, v_rows, (w / 2) as u32);
+        self.inner
+            .lock()
+            .expect("video state lock")
+            .counters
+            .uploaded();
+    }
+
+    pub fn counters(&self) -> crate::stats::RenderCounters {
+        self.inner.lock().expect("video state lock").counters
+    }
+
+    pub fn clear_frame(&self) {
+        self.inner.lock().expect("video state lock").textures = None;
     }
 
     pub fn is_ready(&self) -> bool {
@@ -234,7 +249,7 @@ impl VideoShared {
     }
 
     fn paint(&self, info: &egui::PaintCallbackInfo, render_pass: &mut RenderPass<'static>) {
-        let inner = self.inner.lock().expect("video state lock");
+        let mut inner = self.inner.lock().expect("video state lock");
         let Some(textures) = inner.textures.as_ref() else {
             return;
         };
@@ -248,6 +263,7 @@ impl VideoShared {
             viewport.height_px.max(1) as u32,
         );
         render_pass.draw(0..3, 0..1);
+        inner.counters.drawn();
     }
 }
 

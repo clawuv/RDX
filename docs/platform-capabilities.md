@@ -1,17 +1,20 @@
-# 平台能力矩阵（P0 初稿）
+# P0 平台支持边界（2026-10-14）
 
-本表用于界定 v1 的会话、权限和 broker 边界，不承诺绕过操作系统权限。每个平台的具体 API、系统版本下限及打包方式需由 P1/P4 spike 验证后更新。
+状态：工程范围基线；具体 API 可用性与性能须在对应平台实测。此表不等于平台实现已交付。
 
-| 平台/会话 | 捕获 | 输入 | 音频 | 权限与 v1 限制 | Broker 初步判断 |
-|---|---|---|---|---|---|
-| Windows 交互式桌面 | DXGI Desktop Duplication 候选 | `SendInput` 候选 | 用户会话音频设备 | UAC 安全桌面、登录界面和锁屏交互单独验证；未验证前列为不支持 | 默认用户态；只有经验证的跨桌面需求才评估服务代理，服务不能被视为自动获得交互桌面访问权 |
-| macOS 图形用户会话 | ScreenCaptureKit，用户授权 | CGEvent，辅助功能授权 | 用户会话音频设备 | 屏幕录制与辅助功能授权需分别检测/引导；授权拒绝时会话不可控/不可见 | 默认用户态；broker 不绕过 TCC/用户授权 |
-| Linux X11 | X11/XDamage 候选 | XTest 候选 | 用户会话音频设备 | 仅覆盖可访问的 X11 会话；显示服务器与用户会话匹配 | 默认用户态 |
-| Linux Wayland | xdg-desktop-portal ScreenCast + PipeWire | RemoteDesktop portal 能力需逐桌面环境验证 | 用户会话音频设备 | 需接受 portal 用户确认；桌面环境支持不一致，逐项记录支持矩阵 | portal 是授权边界，不以 root broker 绕过；必要时由用户会话进程接入 portal |
+| 平台 | 首轮验证目标（不是已验证最低版本） | 捕获 / 输入 / 音频 | 授权与明确不支持 | Broker |
+|---|---|---|---|---|
+| Windows | Windows 10 22H2、Windows 11，x64，已登录交互桌面 | DXGI / SendInput / 用户会话设备 | 不支持登录、锁屏、UAC 安全桌面及跨用户会话；不自动提权控制高完整性进程 | v1 默认不安装服务 |
+| macOS | macOS 13+，Apple Silicon 与 Intel | ScreenCaptureKit / CGEvent / 用户会话设备 | 屏幕录制与辅助功能分别授权；不绕过 TCC；拒绝或撤销即停止相应能力，不支持登录/锁屏控制 | v1 默认不安装特权代理 |
+| Linux X11 | Ubuntu 22.04/24.04，x64，用户 X11 会话 | X11/XDamage / XTest / 用户会话设备 | 不跨 DISPLAY/Xauthority 会话；不支持登录和锁屏控制 | 默认用户态 |
+| Linux Wayland | 后续按桌面环境逐项验证，初始 MVP 不承诺控制能力 | ScreenCast + PipeWire / RemoteDesktop portal / 用户会话设备 | 必须经过 portal 授权；无实现或被拒绝则不可用，不自动回退 root/uinput | 不用 broker 绕过 portal |
 
-## P0/P1/P4 验证项
+## 能力状态和验收约定
 
-- 锁定每个平台的最低系统版本、会话类型及明确不支持的锁屏/UAC/无头场景。
-- 记录授权状态检测、首次授权引导、撤销授权后的行为及错误提示。
-- 对确需 broker 的能力注明具体 OS API、所需权限、IPC 身份校验和失败回退；没有明确理由的能力留在用户进程。
-- P1 测量 broker 路径是否存在及其额外拷贝/延迟；P4 对输入权限和平台限制做真实机器验收。
+每项能力区分 unsupported、permission-required、denied、available、revoked、temporarily-unavailable。界面不得把占位按钮当作 available。拒绝/撤销时停止生产媒体或注入输入并告知用户；恢复需重新授权，不静默重试提权。
+
+显示器移除、分辨率改变、会话锁定和采集 API 失效应结束当前捕获器并由上层重建；恢复前不得重播旧输入。具体错误码映射属于 P1/P4 平台实现验收。
+
+如以后引入 broker，必须另提 ADR：说明不可在用户态完成的 API、身份与会话校验、IPC ACL、最小权限、撤销、故障恢复及拷贝成本。默认不得联网或解析远程会话数据。
+
+最低系统版本须待三平台真实捕获/输入验收后据实确定；上表的目标版本不能用作对外兼容承诺。

@@ -1,12 +1,12 @@
 //! P1 单机回环管道（专用线程 + current-thread tokio 运行时）：
 //! 合成捕获 → openh264 编码 → 解码 → UI 通道，并按节拍驱动重绘。
 
-use std::sync::mpsc::{self, Receiver};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 
-use rd_capture::{Capturer as _, SyntheticCapturer};
+use rd_capture::SyntheticCapturer;
 use rd_codec::{
     CodecId, DecodedFrame, Decoder as _, Encoder as _, EncoderConfig, OpenH264Decoder,
     OpenH264Encoder,
@@ -21,31 +21,55 @@ pub fn now_us() -> u64 {
     ORIGIN.get_or_init(Instant::now).elapsed().as_micros() as u64
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stalled_consumer_keeps_only_latest_frame_and_disconnects() {
+        let (tx, mut rx) = watch::channel(None);
+        for timestamp_us in 0..100 {
+            tx.send(Some(LoopFrame {
+                frame: DecodedFrame {
+                    width: 2,
+                    height: 2,
+                    format: rd_capture::PixelFormat::I420,
+                    data: bytes::Bytes::from_static(&[16, 16, 16, 16, 128, 128]),
+                    timestamp_us,
+                },
+                encode_ms: 0.0,
+                decode_ms: 0.0,
+            }))
+            .unwrap();
+        }
+        assert_eq!(
+            rx.borrow_and_update().as_ref().unwrap().frame.timestamp_us,
+            99
+        );
+        assert!(!rx.has_changed().unwrap());
+        drop(rx);
+        assert!(tx.is_closed());
+        assert!(tx.send(None).is_err());
+    }
+}
+
+#[derive(Clone)]
 pub struct LoopFrame {
     pub frame: DecodedFrame,
     pub encode_ms: f32,
     pub decode_ms: f32,
 }
 
-/// 回环管道的视频源。
-pub enum Source {
-    /// 合成测试图案（可复现素材，无需任何权限）。
-    Synthetic,
-    /// 真实屏幕捕获（macOS: ScreenCaptureKit，需 Screen Recording 权限；
-    /// 其余平台回退合成源并在日志中说明）。
-    Screen,
-}
-
 pub struct PipelineConfig {
-    pub source: Source,
     pub width: u32,
     pub height: u32,
     pub framerate: u32,
     pub bitrate_kbps: u32,
 }
 
-pub fn spawn(config: PipelineConfig, repaint: egui::Context) -> Receiver<LoopFrame> {
-    let (tx, rx) = mpsc::channel();
+pub fn spawn(config: PipelineConfig, repaint: egui::Context) -> watch::Receiver<Option<LoopFrame>> {
+    // One replaceable slot: a stalled UI never accumulates decoded frames.
+    let (tx, rx) = watch::channel(None);
     thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -59,74 +83,67 @@ pub fn spawn(config: PipelineConfig, repaint: egui::Context) -> Receiver<LoopFra
     rx
 }
 
-/// 源分派：Capturer 含 async fn 不能做 trait object，用枚举转发了事。
-enum LoopCapturer {
-    Synthetic(SyntheticCapturer),
-    #[cfg(target_os = "macos")]
-    Screen(rd_capture::MacScreenCapturer),
-}
-
-#[allow(async_fn_in_trait)]
-impl rd_capture::Capturer for LoopCapturer {
-    fn info(&self) -> &rd_capture::CaptureInfo {
-        match self {
-            Self::Synthetic(c) => c.info(),
-            #[cfg(target_os = "macos")]
-            Self::Screen(c) => c.info(),
-        }
-    }
-
-    async fn next_frame(&mut self) -> Result<rd_capture::CapturedFrame, rd_capture::CaptureError> {
-        match self {
-            Self::Synthetic(c) => c.next_frame().await,
-            #[cfg(target_os = "macos")]
-            Self::Screen(c) => c.next_frame().await,
-        }
-    }
-}
-
-fn build_capturer(
-    source: Source,
-    width: u32,
-    height: u32,
-    framerate: u32,
-) -> (LoopCapturer, &'static str) {
-    #[cfg(target_os = "macos")]
-    {
-        if matches!(source, Source::Screen) {
-            match rd_capture::MacScreenCapturer::new(width.max(height)) {
-                Ok(capturer) => return (LoopCapturer::Screen(capturer), "macOS ScreenCaptureKit"),
-                Err(err) => {
-                    eprintln!("rdx: screen capture init failed, falling back to synthetic: {err}")
-                }
-            }
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if matches!(source, Source::Screen) {
-            eprintln!(
-                "rdx: screen capture not implemented on this platform, using synthetic source"
-            );
-        }
-    }
-    (
-        LoopCapturer::Synthetic(SyntheticCapturer::new(width, height, framerate)),
-        "synthetic",
-    )
-}
-
-async fn run(config: PipelineConfig, tx: mpsc::Sender<LoopFrame>, repaint: egui::Context) {
+async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repaint: egui::Context) {
     let PipelineConfig {
-        source,
         width,
         height,
         framerate,
-        bitrate_kbps,
+        ..
     } = config;
 
-    let (mut capturer, source_label) = build_capturer(source, width, height, framerate);
-    eprintln!("rdx: capture source = {source_label}");
+    #[cfg(windows)]
+    if let Ok(value) = std::env::var("RDX_CAPTURE_DISPLAY") {
+        let result = (|| {
+            let index: usize = value.parse().map_err(|_| {
+                rd_capture::CaptureError::Unavailable("invalid display index".into())
+            })?;
+            let displays = rd_capture::dxgi::displays()?;
+            let display = displays.get(index).ok_or_else(|| {
+                rd_capture::CaptureError::Unavailable("display index out of range".into())
+            })?;
+            rd_capture::dxgi::RecoveringDxgiCapturer::new(
+                display,
+                *ORIGIN.get_or_init(Instant::now),
+            )
+        })();
+        match result {
+            Ok(capturer) => run_captured(capturer, config, tx, repaint).await,
+            Err(e) => eprintln!("rdx: DXGI initialization failed: {e}"),
+        }
+        return;
+    }
+    let capturer = SyntheticCapturer::with_clock_origin(
+        width,
+        height,
+        framerate,
+        *ORIGIN.get_or_init(Instant::now),
+    );
+    run_captured(capturer, config, tx, repaint).await;
+}
+
+async fn run_captured(
+    mut capturer: impl rd_capture::Capturer,
+    config: PipelineConfig,
+    tx: watch::Sender<Option<LoopFrame>>,
+    repaint: egui::Context,
+) {
+    let (mut width, mut height) = (capturer.info().width, capturer.info().height);
+    let PipelineConfig {
+        framerate,
+        bitrate_kbps,
+        ..
+    } = config;
+    if width == 0
+        || height == 0
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+        || framerate == 0
+    {
+        eprintln!("rdx: capture requires positive even dimensions and positive framerate");
+        return;
+    }
+    let mut pace = tokio::time::interval(Duration::from_secs_f64(1.0 / framerate as f64));
+    pace.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let encoder_cfg = EncoderConfig {
         codec: CodecId::H264,
         bitrate_kbps,
@@ -149,13 +166,48 @@ async fn run(config: PipelineConfig, tx: mpsc::Sender<LoopFrame>, repaint: egui:
     const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
     loop {
+        if tx.is_closed() {
+            return;
+        }
+        pace.tick().await;
         let captured = match capturer.next_frame().await {
             Ok(frame) => frame,
-            Err(err) => {
-                // 屏幕源的错误多为权限/环境问题，保留管道重试而不是终止。
-                eprintln!("rdx: capture error, retrying in 500ms: {err}");
-                tokio::time::sleep(Duration::from_millis(500)).await;
+            Err(rd_capture::CaptureError::Timeout) => continue,
+            Err(rd_capture::CaptureError::DisplayChanged) => {
+                if tx.send(None).is_err() {
+                    return;
+                }
+                repaint.request_repaint();
+                if !recover_capture(&mut capturer, &tx).await {
+                    return;
+                }
+                (width, height) = (capturer.info().width, capturer.info().height);
+                if width == 0
+                    || height == 0
+                    || !width.is_multiple_of(2)
+                    || !height.is_multiple_of(2)
+                {
+                    eprintln!("rdx: recovered display has unsupported dimensions");
+                    return;
+                }
+                let (Ok(new_encoder), Ok(new_decoder)) =
+                    (OpenH264Encoder::new(encoder_cfg), OpenH264Decoder::new())
+                else {
+                    eprintln!("rdx: codec recreation failed");
+                    return;
+                };
+                encoder = new_encoder;
+                decoder = new_decoder;
+                encode_ms = Samples::default();
+                decode_ms = Samples::default();
+                window_frames = 0;
+                window_start_us = now_us();
+                pace.reset();
                 continue;
+            }
+            Err(e) => {
+                eprintln!("rdx: capture stopped: {e}; restart after display changes");
+                return;
             }
         };
         let t_encode_start = now_us();
@@ -167,18 +219,19 @@ async fn run(config: PipelineConfig, tx: mpsc::Sender<LoopFrame>, repaint: egui:
         encode_ms.push((t_encode_end - t_encode_start) as f32 / 1000.0);
 
         for packet in packets {
+            let t_decode_start = now_us();
             let Ok(decoded) = decoder.decode(&packet).await else {
                 eprintln!("rdx: decode failed, dropping packet");
                 continue;
             };
             let t_decode_end = now_us();
-            decode_ms.push((t_decode_end - t_encode_end) as f32 / 1000.0);
+            decode_ms.push((t_decode_end - t_decode_start) as f32 / 1000.0);
             if tx
-                .send(LoopFrame {
+                .send(Some(LoopFrame {
                     frame: decoded,
                     encode_ms: encode_ms.percentile(0.95).max(0.0),
                     decode_ms: decode_ms.percentile(0.95).max(0.0),
-                })
+                }))
                 .is_err()
             {
                 return; // UI 已退出
@@ -204,5 +257,108 @@ async fn run(config: PipelineConfig, tx: mpsc::Sender<LoopFrame>, repaint: egui:
             window_frames = 0;
             window_start_us = now_us();
         }
+    }
+}
+
+async fn recover_capture(
+    capturer: &mut impl rd_capture::Capturer,
+    tx: &watch::Sender<Option<LoopFrame>>,
+) -> bool {
+    recover_capture_with_delay(capturer, tx, Duration::from_millis(250)).await
+}
+
+async fn recover_capture_with_delay(
+    capturer: &mut impl rd_capture::Capturer,
+    tx: &watch::Sender<Option<LoopFrame>>,
+    base_delay: Duration,
+) -> bool {
+    for attempt in 0..5 {
+        if tx.is_closed() {
+            return false;
+        }
+        let delay = base_delay * (1 << attempt);
+        tokio::select! {
+            _ = tx.closed() => return false,
+            _ = tokio::time::sleep(delay) => {}
+        }
+        match capturer.recover() {
+            Ok(()) => {
+                eprintln!("rdx: capture recovered on attempt {}", attempt + 1);
+                return true;
+            }
+            Err(e) => eprintln!("rdx: capture recovery attempt {} failed: {e}", attempt + 1),
+        }
+    }
+    eprintln!("rdx: capture recovery exhausted; stopping");
+    false
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use rd_capture::{CaptureError, CaptureInfo, CapturedFrame, Capturer, PixelFormat};
+    struct Fake {
+        attempts: usize,
+        succeed_at: usize,
+        info: CaptureInfo,
+    }
+    impl Capturer for Fake {
+        fn info(&self) -> &CaptureInfo {
+            &self.info
+        }
+        fn recover(&mut self) -> Result<(), CaptureError> {
+            self.attempts += 1;
+            if self.attempts >= self.succeed_at {
+                Ok(())
+            } else {
+                Err(CaptureError::DisplayChanged)
+            }
+        }
+        async fn next_frame(&mut self) -> Result<CapturedFrame, CaptureError> {
+            Err(CaptureError::Timeout)
+        }
+    }
+    fn fake(succeed_at: usize) -> Fake {
+        Fake {
+            attempts: 0,
+            succeed_at,
+            info: CaptureInfo {
+                width: 2,
+                height: 2,
+                format: PixelFormat::Bgra8,
+                max_framerate: 30,
+            },
+        }
+    }
+    #[tokio::test]
+    async fn retries_then_recovers() {
+        let (tx, _rx) = watch::channel(None);
+        let mut capture = fake(3);
+        assert!(recover_capture_with_delay(&mut capture, &tx, Duration::ZERO).await);
+        assert_eq!(capture.attempts, 3);
+    }
+    #[tokio::test]
+    async fn stops_after_five_attempts() {
+        let (tx, _rx) = watch::channel(None);
+        let mut capture = fake(6);
+        assert!(!recover_capture_with_delay(&mut capture, &tx, Duration::ZERO).await);
+        assert_eq!(capture.attempts, 5);
+    }
+    #[tokio::test]
+    async fn closing_ui_cancels_backoff() {
+        let (tx, rx) = watch::channel(None);
+        let mut capture = fake(1);
+        let recovery = recover_capture_with_delay(&mut capture, &tx, Duration::from_secs(60));
+        let close = async move {
+            tokio::task::yield_now().await;
+            drop(rx);
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(recovery, close)
+        })
+        .await
+        .unwrap();
+        assert!(!result);
+        assert_eq!(capture.attempts, 0);
     }
 }
