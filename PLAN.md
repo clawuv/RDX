@@ -81,6 +81,8 @@ rd/  （实际目录名 RDX）
 
 ### P1：单机视频垂直切片（6 周）——全项目最高风险段，最先做
 
+当前实现进度：Windows DXGI 已有单帧探针与失效恢复；macOS ScreenCaptureKit 已接入显式选择显示器的回环入口，详见 [macOS 接入记录](docs/p1-macos-2026-10-14.md)。P1 退出标准仍未通过，下一步为授权后的真屏连续运行与性能采样，不提前启动 P2。
+
 同机回环：捕获 → 编码 → 解码 → egui 显示，30fps@1080p。验证两件最没把握的事：**egui 视频路径性能**和**捕获/编码 trait 的接口形状**。
 
 - 捕获：先做 Windows DXGI（脏矩形信息最全）+ macOS ScreenCaptureKit；Linux 先 X11（xcb damage），Wayland 排 P2。

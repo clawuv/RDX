@@ -696,6 +696,8 @@ pub enum Icon {
     Monitor,
     /// Notification bell.
     Bell,
+    /// Curved forward arrow for sharing.
+    Share,
     /// 2×2 tile grid, for the dashboard entry.
     Grid,
 }
@@ -711,6 +713,39 @@ fn draw_icon_ex(p: &Painter, icon: Icon, r: Rect, c: Color32, stroke_mul: f32) {
     let ctr = r.center();
     let at = |x: f32, y: f32| Pos2::new(ctr.x + x * s / 2.0, ctr.y + y * s / 2.0);
     match icon {
+        Icon::Share => {
+            // Filled curved ribbon with a solid arrowhead, readable at toolbar size.
+            let mut mesh = Mesh::default();
+            for i in 0..=16 {
+                let t = i as f32 / 16.0;
+                let u = 1.0 - t;
+                mesh.colored_vertex(
+                    at(
+                        -0.7 * u * u - 1.4 * u * t + 0.12 * t * t,
+                        0.6 * u * u - 0.7 * u * t - 0.35 * t * t,
+                    ),
+                    c,
+                );
+                mesh.colored_vertex(
+                    at(
+                        -0.7 * u * u - 0.5 * u * t + 0.12 * t * t,
+                        0.6 * u * u + 0.12 * u * t + 0.06 * t * t,
+                    ),
+                    c,
+                );
+                if i > 0 {
+                    let n = (i * 2) as u32;
+                    mesh.add_triangle(n - 2, n - 1, n);
+                    mesh.add_triangle(n - 1, n + 1, n);
+                }
+            }
+            p.add(Shape::mesh(mesh));
+            p.add(Shape::convex_polygon(
+                vec![at(0.1, -0.68), at(0.75, -0.14), at(0.1, 0.4)],
+                c,
+                Stroke::NONE,
+            ));
+        }
         Icon::Bell => {
             p.line(
                 vec![

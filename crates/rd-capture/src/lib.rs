@@ -46,6 +46,8 @@ pub struct CapturedFrame {
 
 #[cfg(windows)]
 pub mod dxgi;
+#[cfg(target_os = "macos")]
+pub mod macos_sck;
 pub mod synthetic;
 
 impl CapturedFrame {

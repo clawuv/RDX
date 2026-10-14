@@ -112,6 +112,25 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
         }
         return;
     }
+    #[cfg(target_os = "macos")]
+    if let Ok(value) = std::env::var("RDX_CAPTURE_DISPLAY") {
+        let result = value
+            .parse::<usize>()
+            .map_err(|_| rd_capture::CaptureError::Unavailable("invalid display index".into()))
+            .and_then(|index| {
+                rd_capture::macos_sck::MacScreenCapturer::new(
+                    index,
+                    width,
+                    framerate,
+                    *ORIGIN.get_or_init(Instant::now),
+                )
+            });
+        match result {
+            Ok(capturer) => run_captured(capturer, config, tx, repaint).await,
+            Err(e) => eprintln!("rdx: ScreenCaptureKit initialization failed: {e}"),
+        }
+        return;
+    }
     let capturer = SyntheticCapturer::with_clock_origin(
         width,
         height,

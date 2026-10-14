@@ -7,7 +7,7 @@
 
 ## 状态
 
-P1 进行中：已实现合成视频回环（H.264 软编软解 + GPU YUV 渲染）与桌面 UI。真实屏幕捕获、传输和认证仍未完成；P0 跨平台与安全评审门槛尚未全部验收。详见 PLAN.md 和 docs/validation-2026-10-14.md。
+P1 进行中：已实现合成视频回环（H.264 软编软解 + GPU YUV 渲染）与桌面 UI，Windows DXGI 和 macOS ScreenCaptureKit 已接入可选真屏回环。真屏连续运行/性能验收、Linux 捕获、传输和认证仍未完成；P0 跨平台与安全评审门槛尚未全部验收。详见 PLAN.md、docs/validation-2026-10-14.md 和 [macOS 捕获接入记录](docs/p1-macos-2026-10-14.md)。
 
 ## 构建
 

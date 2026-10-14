@@ -6,7 +6,9 @@ mod cards;
 #[cfg(target_os = "macos")]
 mod macos;
 mod settings;
+mod share;
 mod theme;
+mod updates;
 mod widgets;
 #[cfg(windows)]
 mod win;
@@ -61,10 +63,49 @@ fn main() -> eframe::Result<()> {
                 device_page: 0,
                 devices_per_page: 5,
                 device_filter: 0,
+                updates: updates::Updates::default(),
             }))
         }),
     )
 }
+#[cfg(all(test, target_os = "macos"))]
+mod font_alignment_tests {
+    use super::*;
+
+    #[test]
+    fn macos_text_is_centered_across_page_fonts() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for size in [12.0, 14.0, 18.0, 22.0] {
+                for family in [font(size), menu(size), bold(size), display(size)] {
+                    for text in ["远程协助", "RDX", "RDX 本机"] {
+                        let g = ui.painter().layout_no_wrap(
+                            text.into(),
+                            family.clone(),
+                            Color32::WHITE,
+                        );
+                        let offset = g.mesh_bounds.center().y - g.rect.center().y;
+                        assert!(offset.abs() <= 1.5, "{family:?} {text}: offset={offset}");
+                    }
+                }
+            }
+        });
+        output.textures_delta.clear();
+    }
+}
+
+fn cjk_font_data(path: &str, bytes: Vec<u8>) -> egui::FontData {
+    let mut data = egui::FontData::from_owned(bytes);
+    // Hiragino's ink sits roughly 0.23 em above Inter's line center in egui.
+    // Correct the fallback glyphs (including TextEdit/labels), not page geometry
+    // or Latin digits. Keep YaHei and other platform fallbacks unchanged.
+    if cfg!(target_os = "macos") && path.ends_with("Hiragino Sans GB.ttc") {
+        data.tweak.y_offset_factor = 0.23;
+    }
+    data
+}
+
 fn install_fonts(ctx: &egui::Context) {
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
@@ -91,7 +132,7 @@ fn install_fonts(ctx: &egui::Context) {
         if let Ok(bytes) = std::fs::read(path) {
             fonts
                 .font_data
-                .insert("cjk".into(), Arc::new(FontData::from_owned(bytes)));
+                .insert("cjk".into(), Arc::new(cjk_font_data(path, bytes)));
             fallback.push("cjk".into());
             break;
         }
@@ -106,7 +147,7 @@ fn install_fonts(ctx: &egui::Context) {
         if let Ok(bytes) = std::fs::read(path) {
             fonts
                 .font_data
-                .insert("cjk-bold".into(), Arc::new(FontData::from_owned(bytes)));
+                .insert("cjk-bold".into(), Arc::new(cjk_font_data(path, bytes)));
             cjk_bold = true;
             break;
         }
@@ -151,6 +192,7 @@ struct App {
     device_page: usize,
     devices_per_page: usize,
     device_filter: usize,
+    updates: updates::Updates,
 }
 impl eframe::App for App {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
@@ -158,6 +200,7 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.updates.poll(&ctx);
         self.settings.apply_theme(&ctx, &mut self.theme);
         ui.set_style(ctx.global_style());
         #[allow(unused_mut)]
@@ -219,7 +262,7 @@ impl eframe::App for App {
                 screen.min,
                 Pos2::new(screen.left() + width, screen.bottom()),
             );
-            if let Some(page) = draw_sidebar(ui, side, &self.theme, self.page) {
+            if let Some(page) = draw_sidebar(ui, side, &self.theme, self.page, &mut self.updates) {
                 self.page = page;
                 self.scroll = 0.0;
             }
@@ -271,6 +314,7 @@ impl eframe::App for App {
             true,
         )
         .on_hover_text("通知");
+        share::show(ui, toggle.translate(Vec2::new(68.0, 0.0)), &self.theme);
         #[cfg(windows)]
         win::caption_buttons(ui, screen, &self.theme);
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
@@ -286,7 +330,13 @@ impl eframe::App for App {
         });
     }
 }
-fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> Option<Page> {
+fn draw_sidebar(
+    ui: &mut egui::Ui,
+    side: Rect,
+    theme: &Theme,
+    current: Page,
+    updates: &mut updates::Updates,
+) -> Option<Page> {
     // Align the first menu item's top edge with the content sheet's top edge.
     let menu_top = if cfg!(windows) { TOOLBAR_H + 8.0 } else { 58.0 };
     let item = Rect::from_min_size(
@@ -341,11 +391,19 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
     {
         selected = Some(Page::Devices);
     }
+    let settings_row = Rect::from_min_size(
+        Pos2::new(side.left() + SIDEBAR_ITEM_LEFT, side.bottom() - 44.0),
+        item.size(),
+    );
+    let update_rect = Rect::from_center_size(
+        Pos2::new(settings_row.right() - 18.0, settings_row.center().y),
+        Vec2::splat(28.0),
+    );
     if nav_item(
         ui,
-        Rect::from_min_size(
-            Pos2::new(side.left() + SIDEBAR_ITEM_LEFT, side.bottom() - 44.0),
-            item.size(),
+        Rect::from_min_max(
+            settings_row.min,
+            Pos2::new(update_rect.left() - 8.0, settings_row.bottom()),
         ),
         Id::new("nav-settings"),
         Icon::Gear,
@@ -359,6 +417,12 @@ fn draw_sidebar(ui: &mut egui::Ui, side: Rect, theme: &Theme, current: Page) -> 
     {
         selected = Some(Page::Settings);
     }
+    updates.show(
+        ui,
+        update_rect,
+        settings_row.shrink2(Vec2::new(8.0, 0.0)),
+        theme,
+    );
     selected
 }
 
@@ -395,7 +459,7 @@ impl App {
         ];
         widgets::icon_button(
             ui,
-            Rect::from_center_size(Pos2::new(x + w - 94.0, y + 14.0), Vec2::splat(28.0)),
+            Rect::from_center_size(Pos2::new(x + w - 150.0, y + 14.0), Vec2::splat(28.0)),
             Id::new("refresh-devices"),
             Icon::Refresh,
             t,
@@ -403,33 +467,24 @@ impl App {
         )
         .on_hover_text("刷新设备列表");
         let previous_filter = self.device_filter;
-        ui.scope_builder(
-            egui::UiBuilder::new().max_rect(Rect::from_min_size(
-                Pos2::new(x + w - 72.0, y + 2.0),
-                Vec2::new(72.0, 26.0),
-            )),
-            |ui| {
-                let label = if self.device_filter == 0 {
-                    "筛选 ▾"
-                } else {
-                    "筛选 • ▾"
-                };
-                ui.menu_button(label, |ui| {
-                    for (value, label) in [
-                        (0, "全部设备"),
-                        (1, "本机"),
-                        (2, "受信任设备"),
-                        (3, "占位设备"),
-                    ] {
-                        if ui
-                            .selectable_value(&mut self.device_filter, value, label)
-                            .clicked()
-                        {
-                            ui.close();
-                        }
-                    }
-                });
-            },
+        let filters: Vec<_> = ["全部设备", "本机", "受信任设备", "占位设备"]
+            .into_iter()
+            .enumerate()
+            .map(|(value, label)| (value, label.to_owned()))
+            .collect();
+        let filter_label = if previous_filter == 0 {
+            "筛选".to_owned()
+        } else {
+            filters[previous_filter].1.clone()
+        };
+        pagination_select(
+            ui,
+            Rect::from_min_size(Pos2::new(x + w - 128.0, y), Vec2::new(128.0, 28.0)),
+            Id::new("device-filter"),
+            &mut self.device_filter,
+            filter_label,
+            &filters,
+            t,
         );
         if previous_filter != self.device_filter {
             self.device_page = 0;
@@ -795,10 +850,11 @@ fn nav_item(
     let tx = icon_x + 25.0;
     let max_w = rect.right() - tx - if closeable { 34.0 } else { 12.0 };
     let lbl = widgets::truncate(&p, label, &menu(14.0), max_w);
-    // YaHei Bold ink hangs low in its (large) line box; lift the text so the
-    // visual mass centers on the icon axis.
+    // Preserve the existing YaHei compensation on Windows only. Hiragino
+    // is corrected at font registration so every page shares the same baseline.
+    let text_y = rect.center().y - if cfg!(windows) { 2.0 } else { 0.0 };
     p.text(
-        Pos2::new(tx, rect.center().y - 2.0),
+        Pos2::new(tx, text_y),
         Align2::LEFT_CENTER,
         lbl,
         menu(14.0),
@@ -949,7 +1005,7 @@ fn promo(ui: &mut egui::Ui, rect: Rect, theme: &Theme) {
     }
 }
 
-/// Pagination dropdown with explicit geometry and a shared text baseline.
+/// Shared device filter/pagination dropdown with a consistent text baseline.
 fn pagination_select(
     ui: &mut egui::Ui,
     rect: Rect,
@@ -998,6 +1054,13 @@ fn pagination_select(
     egui::Popup::menu(&response)
         .id(popup_id)
         .width(rect.width().max(96.0))
+        .frame(
+            egui::Frame::popup(ui.style())
+                .fill(theme.surface)
+                .stroke(Stroke::new(1.0, theme.stroke))
+                .corner_radius(cr(7.0))
+                .inner_margin(6.0),
+        )
         .show(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             for (value, text) in options {
