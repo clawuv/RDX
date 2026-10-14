@@ -1,0 +1,7 @@
+# screencapturekit（swift-bridge）的静态库以 @rpath 引用 Swift 运行时。
+# macOS 13+ 的 Swift 运行时位于 dyld 共享缓存中的 /usr/lib/swift/（磁盘上无文件），
+# 这一条 rpath 即可让所有链接它的二进制（含各 crate 的测试二进制）正确加载。
+# 注意：若环境变量 RUSTFLAGS 已被设置，本文件会被忽略（CI 中避免设置）。
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-args=-Wl,-rpath,/usr/lib/swift"]

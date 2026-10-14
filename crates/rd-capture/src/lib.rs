@@ -47,6 +47,12 @@ pub mod synthetic;
 
 pub use synthetic::SyntheticCapturer;
 
+#[cfg(target_os = "macos")]
+pub mod macos_sck;
+
+#[cfg(target_os = "macos")]
+pub use macos_sck::MacScreenCapturer;
+
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
     #[error("capture backend unavailable: {0}")]

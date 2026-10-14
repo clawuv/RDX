@@ -7,12 +7,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rd_app::pipeline::{self, LoopFrame, PipelineConfig};
+use rd_app::pipeline::{self, LoopFrame, PipelineConfig, Source};
 use rd_app::stats::Samples;
 use rd_app::video::{VideoShared, YuvPaintCallback};
 use std::sync::mpsc::Receiver;
 
 fn main() -> eframe::Result<()> {
+    // `--screen`：真实屏幕捕获（macOS 需 Screen Recording 权限）；默认合成源。
+    let source = if std::env::args().any(|arg| arg == "--screen") {
+        Source::Screen
+    } else {
+        Source::Synthetic
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("RDX — P1 回环")
@@ -24,7 +30,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             let shared = cc.wgpu_render_state.as_ref().map(VideoShared::new);
-            Ok(Box::new(LoopApp::new(cc.egui_ctx.clone(), shared)))
+            Ok(Box::new(LoopApp::new(cc.egui_ctx.clone(), shared, source)))
         }),
     )
 }
@@ -40,9 +46,10 @@ struct LoopApp {
 }
 
 impl LoopApp {
-    fn new(ctx: egui::Context, shared: Option<Arc<VideoShared>>) -> Self {
+    fn new(ctx: egui::Context, shared: Option<Arc<VideoShared>>, source: Source) -> Self {
         let receiver = pipeline::spawn(
             PipelineConfig {
+                source,
                 width: 1280,
                 height: 720,
                 framerate: 30,

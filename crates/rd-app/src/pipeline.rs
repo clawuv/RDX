@@ -27,7 +27,17 @@ pub struct LoopFrame {
     pub decode_ms: f32,
 }
 
+/// 回环管道的视频源。
+pub enum Source {
+    /// 合成测试图案（可复现素材，无需任何权限）。
+    Synthetic,
+    /// 真实屏幕捕获（macOS: ScreenCaptureKit，需 Screen Recording 权限；
+    /// 其余平台回退合成源并在日志中说明）。
+    Screen,
+}
+
 pub struct PipelineConfig {
+    pub source: Source,
     pub width: u32,
     pub height: u32,
     pub framerate: u32,
@@ -49,15 +59,74 @@ pub fn spawn(config: PipelineConfig, repaint: egui::Context) -> Receiver<LoopFra
     rx
 }
 
+/// 源分派：Capturer 含 async fn 不能做 trait object，用枚举转发了事。
+enum LoopCapturer {
+    Synthetic(SyntheticCapturer),
+    #[cfg(target_os = "macos")]
+    Screen(rd_capture::MacScreenCapturer),
+}
+
+#[allow(async_fn_in_trait)]
+impl rd_capture::Capturer for LoopCapturer {
+    fn info(&self) -> &rd_capture::CaptureInfo {
+        match self {
+            Self::Synthetic(c) => c.info(),
+            #[cfg(target_os = "macos")]
+            Self::Screen(c) => c.info(),
+        }
+    }
+
+    async fn next_frame(&mut self) -> Result<rd_capture::CapturedFrame, rd_capture::CaptureError> {
+        match self {
+            Self::Synthetic(c) => c.next_frame().await,
+            #[cfg(target_os = "macos")]
+            Self::Screen(c) => c.next_frame().await,
+        }
+    }
+}
+
+fn build_capturer(
+    source: Source,
+    width: u32,
+    height: u32,
+    framerate: u32,
+) -> (LoopCapturer, &'static str) {
+    #[cfg(target_os = "macos")]
+    {
+        if matches!(source, Source::Screen) {
+            match rd_capture::MacScreenCapturer::new(width.max(height)) {
+                Ok(capturer) => return (LoopCapturer::Screen(capturer), "macOS ScreenCaptureKit"),
+                Err(err) => {
+                    eprintln!("rdx: screen capture init failed, falling back to synthetic: {err}")
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if matches!(source, Source::Screen) {
+            eprintln!(
+                "rdx: screen capture not implemented on this platform, using synthetic source"
+            );
+        }
+    }
+    (
+        LoopCapturer::Synthetic(SyntheticCapturer::new(width, height, framerate)),
+        "synthetic",
+    )
+}
+
 async fn run(config: PipelineConfig, tx: mpsc::Sender<LoopFrame>, repaint: egui::Context) {
     let PipelineConfig {
+        source,
         width,
         height,
         framerate,
         bitrate_kbps,
     } = config;
 
-    let mut capturer = SyntheticCapturer::new(width, height, framerate);
+    let (mut capturer, source_label) = build_capturer(source, width, height, framerate);
+    eprintln!("rdx: capture source = {source_label}");
     let encoder_cfg = EncoderConfig {
         codec: CodecId::H264,
         bitrate_kbps,
@@ -80,9 +149,14 @@ async fn run(config: PipelineConfig, tx: mpsc::Sender<LoopFrame>, repaint: egui:
     const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
     loop {
-        let Ok(captured) = capturer.next_frame().await else {
-            eprintln!("rdx: synthetic capture failed, stopping pipeline");
-            return;
+        let captured = match capturer.next_frame().await {
+            Ok(frame) => frame,
+            Err(err) => {
+                // 屏幕源的错误多为权限/环境问题，保留管道重试而不是终止。
+                eprintln!("rdx: capture error, retrying in 500ms: {err}");
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
         };
         let t_encode_start = now_us();
         let Ok(packets) = encoder.encode(&captured).await else {
