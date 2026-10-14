@@ -8,6 +8,7 @@
 | Inter-Regular.ttf、Inter-SemiBold.ttf | 从 DCX 复制 | 需核对确切字体版本及上游许可，并附对应许可全文；当前来源说明不替代字体许可 |
 | Rust 第三方依赖 | Cargo.lock 与各 crate 元数据 | cargo-deny 固定版本检查 licenses / bans / sources / advisories |
 | RDX 自有代码 | workspace crate 未声明统一 license | 需权利人确定发行许可；不以自动忽略无许可错误通过审查 |
+| 根目录 LICENSE（MIT） | a8eacf1 切换为 MIT 并移除 AGPL 派生 UI；其后 9f1e544 合并（prefer remote changes）又带回派生 UI，README 许可证说明被同时回退 | 与上表 AGPL 派生内容相抵，定案前不作为有效发行许可承诺 |
 
 ## 审查规则
 

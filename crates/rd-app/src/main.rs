@@ -576,17 +576,10 @@ impl App {
         {
             self.device_page += 1;
         }
-        let range_start = self.device_page * self.devices_per_page;
-        let range_end = (range_start + self.devices_per_page).min(total);
         ui.painter().text(
             Pos2::new(pager.right(), center_y),
             Align2::RIGHT_CENTER,
-            format!(
-                "{}–{} / {} 台",
-                if total == 0 { 0 } else { range_start + 1 },
-                range_end,
-                total
-            ),
+            format!("总共 {total} 台"),
             font(12.0),
             t.text_dim,
         );
