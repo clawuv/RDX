@@ -1,8 +1,22 @@
 # RDX 实施计划
 
+- P2 视频队列饱和验证（2026-10-15）：真实本机 WebRTC 持续发送、暂停视频读取，确认 256 项接收队列满后 worker 主动退出、保留句柄时事件流结束、排空后 Closed 与重组缓存归零。四库 66 项测试及 transport/app 严格 clippy 通过；单队列协议字节上限约 3.01MiB，不代表会话 RSS，真实拥塞/跨机长稳仍待验收。见 docs/p2-queue-saturation-2026-10-15.md。
+
+- P2 接收边界修复（2026-10-15）：迟到/重复/窗口外的 Stale 分片改为丢弃而非断线，recv 返回错误时立即释放部分帧缓存；新增确定性队列注入和关闭后保留句柄的缓存释放回归。四库 65 项测试、transport/app 严格 clippy 通过，拥塞/RSS/双机验收仍开放。见 docs/p2-receive-boundaries-2026-10-15.md。
+
+- P2 对端停止后重连验证（2026-10-15）：重连切换测试改为实际销毁首代 WebRTC 发送端，接收端自行检测关闭后触发监督器重建；验证旧帧→清空→新连接解码及 UI 关闭后的退出，不再以模拟 Closed 作为断线触发。单项 9.88 秒通过；应用库 28 项与严格 clippy 回归通过。仍非拔网线或双机验收。见 docs/p2-reconnect-2026-10-15.md。
+
+- P2 协议模糊测试与 CI（2026-10-15）：建立独立 cargo-fuzz 工程，覆盖裸帧、protobuf 控制消息和有状态 RDF1 重组的往返/零消费/缓存上限/过期释放不变量；种子变异回归与严格 clippy 本机通过，新增 Linux nightly 30 秒模糊冒烟及 Windows WebRTC CI。定向 63 项库回归通过，远端 CI/ASan 结果待执行，不代表安全或 P2 验收通过。见 fuzz/README.md 与 docs/p2-fuzz-2026-10-15.md。
+
+- P2 开发回环重连（2026-10-15）：网络关闭/超时后最多重建 3 次，退避 250/500/1000ms，成功帧不重置总预算；清空旧画面，重建连接与媒体状态，Windows 保留首次显示器名称。应用库 28 项测试、严格 clippy 与默认 rd-loop 构建检查通过；两代真实 WebRTC 连接间以模拟错误触发重连，尚非实际断网或生产会话验收。见 docs/p2-reconnect-2026-10-15.md。
+
+- P3 执行计划制定（2026-10-15）：产出周级计划与决策清单；事实核查确认 str0m 0.24.1 不自带 TURN 客户端与候选收集（风险表新增条目，安排首周 spike），rd-server 仍为空壳、rd-protocol 尚未引入 prost。见 docs/p3-plan-2026-10-15.md。
 - 状态：执行中（按用户 2026-10-15 指示暂缓 P1 剩余验收，继续 P2；P1 不视为通过）
+- P2 独立心跳（2026-10-15）：控制协议新增心跳与必需能力标记，能力交换成功后启用 transport 内独立探测；8 秒无匹配响应关闭 worker，事件流结束促使 SessionBridge 进入 Closed。静态桌面不依赖视频保持存活。真实本机空闲/UDP 静默故障验证与验收结果见 docs/p2-heartbeat-2026-10-15.md；实际拔网线、跨机及重连仍待完成。
+- P2 真屏网络路径（2026-10-15）：WebRTC 回环支持 Windows 显示器选择，复用 DXGI 退避恢复并重建编码器；修复静态桌面 5 秒无帧被误判退出。应用库 24 项测试及严格 clippy 通过，覆盖模拟分辨率变化后的网络解码；真实显示器 0 带窗口运行 8.03 秒，上传/独立绘制 116 帧并正常退出，debug 延迟未达性能标准。真实拔插、release 性能及跨机验收仍开放。详见 docs/p2-continuous-loop-2026-10-15.md。
+- P2 连续管线（2026-10-15）：新增 `RDX_LOOP_WEBRTC=1` 开发入口，合成捕获经本机 WebRTC 连续传输、解码后复用 rd-loop GPU 显示；单槽最新帧、关闭取消与 5 秒网络等待上限已接入。应用库 23 项测试与严格 clippy 通过。仅为进程内双端开发回环，生产认证、真屏网络链路、主 UI 总装和双机验收仍待完成。见 docs/p2-continuous-loop-2026-10-15.md。
 - Windows 真屏 roundtrip 同屏 release 动态复测完成：20.01 秒解码 526 帧、26.29fps，捕获到解码 p50/p95=21.87/52.17ms（不含 GPU/呈现）。修复 OpenH264 码率控制跳帧发送空 packet 导致解码错误的问题，新增实际跳帧回归测试。动态图案本身仅 20.93 次更新/s，尚不满足稳定 1080p30 素材要求，P1 仍待性能与完整 GUI 上屏验收。见 docs/p1-windows-roundtrip-2026-10-15.md。
-- P2 首周 spike 已完成（2026-10-15）：str0m 0.24（纯 Rust crypto，feature `webrtc` 门控）接入 rd-transport，同步 Rtc+socket 归专用线程、与 tokio 只走 channel 的桥接模式经本机双实例真实 ICE+DTLS+SCTP DataChannel 双向交换验证（4 项测试通过，clippy/wasm 核心边界复验通过）。P2 正式接入待办：Frame 分片/重组规格、平台 crypto 后端评估、会话状态机联动、跨机联调。详见 docs/p2-str0m-spike-2026-10-15.md。
+- P2 进展（2026-10-15）：实验性 12KiB Frame 分片/重组已接入 str0m；控制通道有序可靠、视频通道无序零重传，分离有界队列、缓存超时及 protobuf 关键帧恢复请求。engine 已映射控制请求并为活动会话提供媒体队列转发；rd-app 编码管道支持按 stream ID 注入请求并输出 H.264 IDR，应用层事件桥接已接入，支持显式关闭和任务释放；单流 H.264 媒体网络适配已实现（时间戳保留、64 位编号、缺帧主动请求 IDR 并限频恢复）；远程捕获/显示任务与 UI 总装仍待接入。本轮应用库 20 项测试及严格 clippy 通过。详见 docs/p2-remote-media-2026-10-15.md。协议 12 项、engine 11 项、启用 webrtc 的 transport 9 项测试，最新启用 rd-app/webrtc 的完整 workspace 76 项测试，相关严格 clippy 与核心 crate wasm 构建通过。固定配置能力交换已实现，较小接收上限或不兼容格式拒绝，详见 docs/p2-capabilities-2026-10-15.md；动态上限协商、会话门控总装、重连、跨机联调、拥塞及会话 RSS 测试仍开放；格式未冻结。详见 docs/p2-fragmentation-2026-10-15.md 与 docs/p2-str0m-spike-2026-10-15.md。
 - P1 macOS 侧验收数据收尾（2026-10-15）：端到端 4 轮受控采样 p50 63.4–66.8ms（100% 配对，按 ADR-0007 口径余量 ~19%）；CPU 预算定为全进程 ≤0.5 逻辑核均值，实测 0.28–0.29 核达标；真屏轮 RSS ≈953MB 与历史样本差异悬殊，登记为内存预算核查项。Windows 实机回归无可达主机（SSH 清单仅无桌面 Ubuntu），Linux X11 未接入——P1 整体验收仍开放。
 - 延迟预算口径已定（ADR-0007，2026-10-14 代拟可推翻）：v1 以“捕获到上屏（内容观测法）p50<80ms”为 P1 退出标准，工程内控“捕获→GPU 完成 p95<50ms”（release 现测 41.3/46.2ms 达标）；呈现侧优化登记为 v1 后项。依据：内容归因端到端 release 66.8ms p50（531/531 配对），瓶颈在合成/呈现链（≈58ms）而非软编软解（8.75ms）。详见 docs/adr/0007 与 docs/p1-macos-2026-10-14.md。
 - P1 验收前置收尾：管道停止提示运行中检查通过（非法显示器索引触发，红色提示+占位文本，截屏验证）；1080p30 回环 demo 录屏已生成（target/p1-demo-macos.mov，构建产物）。新口径下 macOS 侧数字指标已满足（66.8<80ms；内控 46.2<50ms），P1 整体验收仍待：CPU 占用预算量化定义、Windows 实机回归、受控多次采样统计——完成前不宣布 P1 通过。
@@ -93,7 +107,7 @@ rd/  （实际目录名 RDX）
 
 ### P1：单机视频垂直切片（6 周）——全项目最高风险段，最先做
 
-当前实现进度：Windows DXGI 已有单帧探针与失效恢复；macOS ScreenCaptureKit 已接入显式选择显示器的回环入口，并完成真屏连续采样、受控动态素材（pattern_window）、GPU 完成反馈、呈现观测探针（present_probe）与 release 回环对照，详见 [macOS 接入记录](docs/p1-macos-2026-10-14.md)。P1 退出标准仍未通过，下一步为 release 呈现复测以分离测量侧延迟、rd-loop 前台/遮挡对比，不提前启动 P2。
+当前实现进度：Windows DXGI 已有单帧探针与失效恢复；macOS ScreenCaptureKit 已接入显式选择显示器的回环入口，并完成真屏连续采样、受控动态素材（pattern_window）、GPU 完成反馈、呈现观测探针（present_probe）与 release 回环对照，详见 [macOS 接入记录](docs/p1-macos-2026-10-14.md)。P1 退出标准仍未通过，剩余验收按用户 2026-10-15 指示暂缓，保留缺项并继续 P2。
 
 同机回环：捕获 → 编码 → 解码 → egui 显示，30fps@1080p。验证两件最没把握的事：**egui 视频路径性能**和**捕获/编码 trait 的接口形状**。
 
@@ -107,11 +121,13 @@ rd/  （实际目录名 RDX）
 
 ### P2：双端 + 传输层（6 周）
 
-首周 spike 已出结论（2026-10-15）：str0m 桥接模式可行，rd-transport 已含 feature 门控的 `Str0mTransport` 与进程内 `connect_pair` 测试设施，见 [str0m spike 记录](docs/p2-str0m-spike-2026-10-15.md)。P1 未整体验收（Windows 回归、Linux X11 待做），P2 其余工作在 P1 收口后推进。
+2026-10-15：初版实验性分片/重组组件接入 str0m，后续关键帧恢复与引擎回归以本节顶部最新记录为准；格式未冻结。见 [分片规格与验证](docs/p2-fragmentation-2026-10-15.md)。
+
+首周 spike 已出结论（2026-10-15）：str0m 桥接模式可行，rd-transport 已含 feature 门控的 `Str0mTransport` 与进程内 `connect_pair` 测试设施，见 [str0m spike 记录](docs/p2-str0m-spike-2026-10-15.md)。P1 未整体验收（Windows 回归、Linux X11 待做），按用户 2026-10-15 指示继续 P2，不以 P1 收口为本轮前置条件。
 
 拆出受控端/控制端两个角色（同一二进制的两种模式），引入 `rd-engine` 的会话 actor。
 
-- 消息面：protobuf（prost），帧面候选格式 `[stream:u8][flags:u8][seq:u16][len:u32]`，**帧绝不经 protobuf**。在下列分片规格验收前不得宣称格式定稿；当前头部没有足以标识无序分片索引的信息。
+- 消息面：protobuf（prost），Frame 候选头为 `[stream:u8][flags:u8][seq:u16][len:u32]`，**媒体帧绝不经 protobuf**。当前实验性分片信封另带访问单元 ID、stream ID、分片索引与总数；在分片/能力协商验收前不得宣称格式定稿。
 - str0m 集成：str0m 是同步的用户态 WebRTC，跑在专用线程上按定时器轮询，与 tokio 之间只走 channel——先做一个 spike 确认这个桥接模式（本阶段第一周出结论，它是最大不确定点）。
 - 数据通道策略：控制/输入走有序可靠 DataChannel；视频帧走**无序 + 零重传**的 DataChannel（迟到帧直接丢弃，等下一关键帧），这是低延迟的关键取舍。
 - 在 Transport 内将编码访问单元切成符合协商消息上限的块；每块需携带可关联帧序号与分片索引/总数（或等价的末片可验证方案）。重组器必须有每会话和每帧字节上限、并发帧上限和明确过期时间；丢任一分片即丢整帧，过期后释放缓存并请求关键帧。控制与媒体分通道还需验证控制消息不会被大媒体写入造成的队列积压拖延。
@@ -121,6 +137,10 @@ rd/  （实际目录名 RDX）
 - **退出标准**：局域网 1080p30，端到端延迟 < 80ms，拔网线 10 秒内触发状态机转移到断线态并可重连。
 
 ### P3：公网可用（4 周）
+
+2026-10-15：执行计划已制定（周级拆解、决策清单与风险登记），并完成关键事实核查——str0m 0.24.1 不自带 TURN 客户端与候选收集，srflx/relay 为首周 spike。见 [P3 执行计划](docs/p3-plan-2026-10-15.md)。
+
+2026-10-15 开发增量（未验收）：rd-server 信令服务（注册/不透明中转/在线/限额/心跳 + TURN 凭证代签）、rd-transport 自带最小 STUN/TURN 客户端与 Plane 路由（强制 relay 与回退切换经真实 ICE/DTLS/SCTP 本机端到端验证）、信令客户端与 dial/answer 编排（对进程内真实 rd-server 建连传帧）；deploy/ 部署清单就绪。公网真机（coturn 联调、NAT 矩阵、双家庭网络验收）与部署硬化仍开放。见 [P3 进展](docs/p3-signaling-relay-2026-10-15.md)与 ADR-0008。
 
 - `rd-server` 信令服务：axum + WebSocket，只做三件事——ID 注册/寻址、SDP/ICE 中转、在线状态。存储 Postgres（sqlx）。按 ID 一致性哈希预留水平扩展，v1 单实例。
 - coturn 部署：TURN 凭证用 HMAC 时限 REST API 签发（信令服务代签），不自建中继。
@@ -176,6 +196,7 @@ rd/  （实际目录名 RDX）
 |---|---|---|---|
 | egui 视频路径性能不达标 | 中 | 高 | P1 最先验证；有 TextureHandle 降级路径 |
 | str0m 与 tokio 桥接/成熟度问题 | 中 | 高 | P2 第一周 spike；最坏情况换 libwebrtc 绑定，Transport trait 隔离了爆炸半径 |
+| str0m 无 TURN 客户端/候选收集不自带（2026-10-15 确认） | 中 | 高 | P3 首周 spike 三选一：`is` STUN 构建器自研最小 TURN 客户端 / turnclient / webrtc-rs turn；P3 计划 §7 |
 | Wayland 捕获/注入体验差 | 高 | 中 | 接受 portal 授权弹窗的 v1 体验，文档说明；不追求绕过 |
 | macOS 权限引导劝退用户 | 高 | 中 | P4 专做引导 UI + 检测状态 |
 | 实时 AV1 软编不可用 | 高 | 低 | AV1 只做硬编，软编基线定为 H.264，计划内已有 |

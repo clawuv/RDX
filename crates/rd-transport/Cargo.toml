@@ -9,7 +9,7 @@ license.workspace = true
 # P2 spike：原生端 WebRTC（str0m）。默认关闭，wasm 侧不会拉入原生依赖。
 # crypto 选纯 Rust 实现保证三平台可移植；平台原生后端（apple-crypto/wincrypto）
 # 由 P2 正式接入时按平台评估。
-webrtc = ["dep:str0m"]
+webrtc = ["dep:str0m", "dep:hmac", "dep:sha1", "dep:md-5", "dep:tokio-tungstenite", "dep:futures-util"]
 
 [dependencies]
 rd-protocol.workspace = true
@@ -18,6 +18,14 @@ thiserror.workspace = true
 tokio.workspace = true
 bytes.workspace = true
 str0m = { version = "0.24", optional = true, default-features = false, features = ["rust-crypto"] }
+# TURN 长期凭证（RFC 5389/5766）：MESSAGE-INTEGRITY 用 HMAC-SHA1，密钥为
+# MD5(username:realm:password)。与 rd-server 的凭证签发同代 RustCrypto 栈。
+hmac = { version = "0.12", optional = true }
+sha1 = { version = "0.10", optional = true }
+md-5 = { version = "0.10", optional = true }
+tokio-tungstenite = { version = "0.29", features = ["connect"], optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [dev-dependencies]
 bytes.workspace = true
+rd-server = { path = "../rd-server" }

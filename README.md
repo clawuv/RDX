@@ -35,6 +35,11 @@ Windows GUI 产物为 `target/release/rd-app.exe`，正式版本不弹出控制�
 设置 `RDX_CAPTURE_DISPLAY=<索引>` 可选择真屏来源（需系统授予屏幕录制/捕获权限）。
 CI 同样固定使用 1.95；wasm 目标由对应 CI 作业安装。
 
+P2 本机连续 WebRTC 开发模式：设置 `RDX_LOOP_WEBRTC=1`，运行
+`cargo run -p rd-app --features webrtc --bin rd-loop`。该模式默认用合成源，
+经真实本机 WebRTC 传输后显示；Windows 可设置 `RDX_CAPTURE_DISPLAY=0` 选择真屏来源，
+可搭配 `RDX_LOOP_SECONDS` 限时运行；网络关闭或超时最多自动重连 3 次，保留首次选择的显示器。详见 [验收记录](docs/p2-continuous-loop-2026-10-15.md)。
+
 Windows 的主界面和 `rd-loop` 默认使用 wgpu/DX12，避免部分旧版 Intel Vulkan
 驱动在启动时发生访问冲突。无需设置环境变量；调试时仍可通过 `WGPU_BACKEND`
 显式选择其他后端。

@@ -21,6 +21,15 @@ fn unix_us() -> u64 {
 }
 
 fn main() -> eframe::Result<()> {
+    if std::env::var("RDX_LOOP_WEBRTC").as_deref() == Ok("1") {
+        if !cfg!(feature = "webrtc") {
+            eprintln!("RDX_LOOP_WEBRTC requires --features webrtc");
+            std::process::exit(2);
+        }
+        eprintln!(
+            "rdx: local WebRTC development loop; capture selected by RDX_CAPTURE_DISPLAY; no remote authentication"
+        );
+    }
     let duration = match std::env::var("RDX_LOOP_SECONDS") {
         Ok(value) => match value.parse::<u64>() {
             Ok(seconds @ 1..=120) => Some(Duration::from_secs(seconds)),
@@ -71,7 +80,11 @@ fn main() -> eframe::Result<()> {
         _ => None,
     };
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("RDX — P1 回环")
+        .with_title(if std::env::var("RDX_LOOP_WEBRTC").as_deref() == Ok("1") {
+            "RDX — P2 WebRTC 回环"
+        } else {
+            "RDX — P1 回环"
+        })
         .with_inner_size([980.0, 640.0]);
     if let Some(position) = position {
         viewport = viewport.with_position(position);
@@ -123,15 +136,21 @@ struct LoopApp {
 
 impl LoopApp {
     fn new(ctx: egui::Context, shared: Option<Arc<VideoShared>>) -> Self {
-        let receiver = pipeline::spawn(
-            PipelineConfig {
-                width: 1920,
-                height: 1080,
-                framerate: 30,
-                bitrate_kbps: 8000,
-            },
-            ctx,
-        );
+        let config = PipelineConfig {
+            stream_id: 1,
+            width: 1920,
+            height: 1080,
+            framerate: 30,
+            bitrate_kbps: 8000,
+        };
+        #[cfg(feature = "webrtc")]
+        let receiver = if std::env::var("RDX_LOOP_WEBRTC").as_deref() == Ok("1") {
+            rd_app::remote_pipeline::spawn_loopback(config, ctx)
+        } else {
+            pipeline::spawn(config, ctx)
+        };
+        #[cfg(not(feature = "webrtc"))]
+        let receiver = pipeline::spawn(config, ctx);
         Self {
             started: Instant::now(),
             duration: None,
@@ -332,6 +351,13 @@ impl eframe::App for LoopApp {
                 ));
             });
             ui.add_space(4.0);
+            if std::env::var("RDX_LOOP_WEBRTC").as_deref() == Ok("1") {
+                ui.label(if std::env::var_os("RDX_CAPTURE_DISPLAY").is_some() {
+                    "Local WebRTC · display capture · development mode"
+                } else {
+                    "Local WebRTC · synthetic capture · development mode"
+                });
+            }
             ui.label("GPU queue-drain via on_submitted_work_done; presentation not measured.");
             if self.pipeline_stopped {
                 ui.colored_label(
@@ -351,7 +377,9 @@ impl eframe::App for LoopApp {
                     ));
                 }
                 _ => {
-                    ui.centered_and_justified(|ui| ui.label("等待视频帧…（初始化或显示器恢复中）"));
+                    ui.centered_and_justified(|ui| {
+                        ui.label("等待视频帧…（初始化、重新连接或显示器恢复中）")
+                    });
                 }
             }
         });

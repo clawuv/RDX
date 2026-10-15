@@ -2,7 +2,9 @@
 //!
 //! 见 ADR-0003：媒体帧绝不进入 protobuf，控制与数据分离。
 
-pub mod frame;
+pub mod control;
 pub mod fragment;
+pub mod frame;
+pub mod signaling;
 
 pub use frame::{flags, Frame, FrameError, FrameHeader, HEADER_LEN, MAX_PAYLOAD_LEN};

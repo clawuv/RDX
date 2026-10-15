@@ -1,0 +1,77 @@
+# P3 公网部署（单 VPS，v1-dev）
+#
+# 组成：rd-server（信令/WSS 经 caddy）+ Postgres 预留 + coturn（STUN/TURN 同进程）。
+# 用法见 README.md；先复制 .env.example 为 .env 并改密钥。
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DOMAIN: ${RDX_DOMAIN}
+    depends_on:
+      - rd-server
+
+  rd-server:
+    build:
+      context: ..
+      dockerfile: deploy/rd-server.Dockerfile
+    restart: unless-stopped
+    environment:
+      # 同一 secret 必须同步写入 coturn 的 static-auth-secret。
+      RDX_TURN_SECRET: ${RDX_TURN_SECRET}
+      RDX_TURN_ADDR: ${RDX_DOMAIN}:3478
+      RDX_STUN_ADDR: ${RDX_DOMAIN}:3478
+      RDX_SERVER_ADDR: 0.0.0.0:8080
+    expose:
+      - "8080"
+    depends_on:
+      - coturn
+
+  # v1-dev 未持久化设备表；Postgres 为 P3 计划 §6 部署硬化预留位。
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${RDX_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # host 网络避免中继端口段逐一映射（仅 Linux）。compose 在 YAML 内展开
+    # ${RDX_TURN_SECRET}，与 rd-server 保持同一共享密钥。
+    network_mode: host
+    command: >
+      -n
+      --realm=${RDX_DOMAIN}
+      --listening-port=3478
+      --fingerprint
+      --use-auth-secret
+      --static-auth-secret=${RDX_TURN_SECRET}
+      --stale-nonce=600
+      --user-quota=12
+      --total-quota=1200
+      --min-port=49160
+      --max-port=49200
+      --no-cli
+      --no-tls
+      --no-dtls
+      --log-file=stdout
+      --no-multicast-peers
+      --denied-peer-ip=0.0.0.0-0.255.255.255
+      --denied-peer-ip=127.0.0.0-127.255.255.255
+      --denied-peer-ip=169.254.0.0-169.254.255.255
+      --denied-peer-ip=::1
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:

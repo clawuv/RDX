@@ -22,9 +22,22 @@ pub trait Transport: Send {
 mod channel;
 
 #[cfg(feature = "webrtc")]
+mod signaling;
+#[cfg(feature = "webrtc")]
 mod str0m_impl;
+#[cfg(feature = "webrtc")]
+mod stun;
+#[cfg(feature = "webrtc")]
+mod turn;
 
 pub use channel::{channel_pair, ChannelTransport};
 
 #[cfg(feature = "webrtc")]
-pub use str0m_impl::{connect_pair, Str0mEvent, Str0mTransport};
+pub use signaling::{
+    answer, dial, generate_device_id, SignalingClient, SignalingError, SignalingEvent,
+};
+#[cfg(feature = "webrtc")]
+pub use str0m_impl::{
+    connect_pair, IceConfig, LocalCandidates, Str0mEvent, Str0mEventReceiver, Str0mTransport,
+    TurnConfig,
+};

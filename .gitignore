@@ -1,3 +1,6 @@
 /target
 .DS_Store
 *.log
+/fuzz/target
+/fuzz/artifacts
+/fuzz/coverage

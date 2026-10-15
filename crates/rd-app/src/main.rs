@@ -138,21 +138,6 @@ fn install_fonts(ctx: &egui::Context) {
             break;
         }
     }
-    // Bold CJK companion; without it "bold"-family CJK labels (menus) fall
-    // through to the regular-weight fallback above.
-    let mut cjk_bold = false;
-    for path in [
-        "C:/Windows/Fonts/msyhbd.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert("cjk-bold".into(), Arc::new(cjk_font_data(path, bytes)));
-            cjk_bold = true;
-            break;
-        }
-    }
     for (family, first) in [
         (FontFamily::Proportional, "inter"),
         (FontFamily::Name("bold".into()), "inter-bold"),
@@ -162,12 +147,10 @@ fn install_fonts(ctx: &egui::Context) {
         names.extend(fallback.clone());
         fonts.families.insert(family, names);
     }
-    // Sidebar menu family: Latin goes inter-bold, CJK goes to the bold
-    // fallback when available, then the regular one.
+    // Sidebar menu family: Latin goes inter-bold; CJK intentionally shares the
+    // regular fallback. Match the macOS look, where menu items render in
+    // Hiragino W3 — system "bold" CJK faces (YaHei Bold) read far too heavy.
     let mut menu_family = vec!["inter-bold".into()];
-    if cjk_bold {
-        menu_family.push("cjk-bold".into());
-    }
     menu_family.extend(fallback.clone());
     fonts
         .families

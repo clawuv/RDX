@@ -3,6 +3,12 @@
 
 pub mod pattern;
 pub mod pipeline;
+#[cfg(feature = "webrtc")]
+pub mod remote;
+#[cfg(feature = "webrtc")]
+pub mod remote_media;
+#[cfg(feature = "webrtc")]
+pub mod remote_pipeline;
 pub mod stats;
 pub mod video;
 

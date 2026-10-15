@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["fuzz"]
 members = [
     "crates/rd-protocol",
     "crates/rd-transport",
@@ -23,6 +24,7 @@ license = "AGPL-3.0-only"
 [workspace.dependencies]
 anyhow = "1"
 bytes = "1"
+prost = "0.14"
 thiserror = "2"
 # wasm 只支持 sync,macros,io-util,rt,time；需要多线程运行时的 bin（rd-app 等）
 # 在自己的 manifest 里追加 rt-multi-thread 特性。

@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+webrtc = ["dep:rd-transport"]
+
 [dependencies]
 bytes.workspace = true
 eframe = { version = "0.36", features = ["wgpu"] }
@@ -13,6 +17,9 @@ egui = "0.36"
 egui-wgpu = "0.36.2"
 rd-capture = { version = "0.1.0", path = "../rd-capture" }
 rd-codec = { version = "0.1.0", path = "../rd-codec" }
+rd-engine = { version = "0.1.0", path = "../rd-engine" }
+rd-protocol.workspace = true
+rd-transport = { version = "0.1.0", path = "../rd-transport", features = ["webrtc"], optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 wgpu = "30"
 ureq = { version = "2.12", features = ["json"] }

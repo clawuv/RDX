@@ -1,0 +1,9 @@
+{
+	# caddy 自动签发并续期 Let's Encrypt 证书；DNS 必须先指向本机。
+	{$DOMAIN} {
+		reverse_proxy rd-server:8080
+		log {
+			# 不记录任何载荷；WS 帧本身不进访问日志，只有升级请求行。
+			output stdout
+		}
+	}

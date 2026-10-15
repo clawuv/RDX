@@ -34,6 +34,40 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --release --locked
 
+  webrtc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p rd-protocol -p rd-engine -p rd-transport -p rd-app --features rd-app/webrtc --lib --locked
+      - run: cargo clippy -p rd-protocol -p rd-engine -p rd-transport -p rd-app --features rd-app/webrtc --all-targets --locked -- -D warnings
+
+  protocol-fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo +nightly fmt --manifest-path fuzz/Cargo.toml -- --check
+      - run: cargo +nightly test --manifest-path fuzz/Cargo.toml --lib --locked
+      - run: cargo +nightly install cargo-fuzz --version 0.13.1 --locked
+      - run: cargo +nightly fuzz run protocol -- -max_total_time=30 -max_len=65536 -rss_limit_mb=512 -timeout=5
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: protocol-fuzz-failures
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
   wasm-core:
     # ADR-0006: 核心 crate 必须能编到 wasm。P8 前以编译检查形式存在。
     runs-on: ubuntu-latest

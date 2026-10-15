@@ -43,6 +43,11 @@ pub enum SessionEvent {
     Drain,
     DrainDone,
     Disconnected,
+    /// A peer requested a fresh keyframe after losing a video access unit.
+    KeyframeRequested {
+        stream_id: u8,
+        after_frame_id: u64,
+    },
 }
 
 impl SessionState {
@@ -59,6 +64,7 @@ impl SessionState {
             (S::CapabilityExchange, E::CapabilitiesAgreed) => S::Active,
             (S::CapabilityExchange, E::Disconnected) => S::Closed,
             (S::Active, E::Drain) => S::Draining,
+            (S::Active, E::KeyframeRequested { .. }) => S::Active,
             (S::Active, E::Disconnected) => S::Closed,
             (S::Draining, E::DrainDone) | (S::Draining, E::Disconnected) => S::Closed,
             (from, event) => {

@@ -1,0 +1,21 @@
+[package]
+name = "rd-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bytes = "1"
+rd-protocol = { path = "../crates/rd-protocol" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "protocol"
+path = "fuzz_targets/protocol.rs"
+test = false
+doc = false
+bench = false

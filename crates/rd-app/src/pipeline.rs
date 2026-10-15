@@ -4,13 +4,14 @@
 use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use rd_capture::SyntheticCapturer;
 use rd_codec::{
     CodecId, DecodedFrame, Decoder as _, Encoder as _, EncoderConfig, OpenH264Decoder,
     OpenH264Encoder,
 };
+use rd_protocol::control::KeyframeRequest;
 
 use crate::stats::Samples;
 
@@ -19,6 +20,11 @@ static ORIGIN: OnceLock<Instant> = OnceLock::new();
 
 pub fn now_us() -> u64 {
     ORIGIN.get_or_init(Instant::now).elapsed().as_micros() as u64
+}
+
+#[cfg(feature = "webrtc")]
+pub(crate) fn clock_origin() -> Instant {
+    *ORIGIN.get_or_init(Instant::now)
 }
 
 #[cfg(test)]
@@ -60,7 +66,9 @@ pub struct LoopFrame {
     pub decode_ms: f32,
 }
 
+#[derive(Clone)]
 pub struct PipelineConfig {
+    pub stream_id: u8,
     pub width: u32,
     pub height: u32,
     pub framerate: u32,
@@ -68,6 +76,28 @@ pub struct PipelineConfig {
 }
 
 pub fn spawn(config: PipelineConfig, repaint: egui::Context) -> watch::Receiver<Option<LoopFrame>> {
+    let (_requests_tx, requests_rx) = mpsc::channel(1);
+    spawn_inner(config, repaint, requests_rx)
+}
+
+/// Start a single-stream encoder loop with a bounded path for active-session
+/// recovery requests from rd-engine. The caller owns the sender.
+pub fn spawn_with_keyframe_requests(
+    config: PipelineConfig,
+    repaint: egui::Context,
+) -> (
+    watch::Receiver<Option<LoopFrame>>,
+    mpsc::Sender<KeyframeRequest>,
+) {
+    let (requests_tx, requests_rx) = mpsc::channel(32);
+    (spawn_inner(config, repaint, requests_rx), requests_tx)
+}
+
+fn spawn_inner(
+    config: PipelineConfig,
+    repaint: egui::Context,
+    requests_rx: mpsc::Receiver<KeyframeRequest>,
+) -> watch::Receiver<Option<LoopFrame>> {
     // One replaceable slot: a stalled UI never accumulates decoded frames.
     let (tx, rx) = watch::channel(None);
     thread::spawn(move || {
@@ -78,12 +108,17 @@ pub fn spawn(config: PipelineConfig, repaint: egui::Context) -> watch::Receiver<
             eprintln!("rdx: pipeline runtime init failed");
             return;
         };
-        runtime.block_on(run(config, tx, repaint));
+        runtime.block_on(run(config, tx, repaint, requests_rx));
     });
     rx
 }
 
-async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repaint: egui::Context) {
+async fn run(
+    config: PipelineConfig,
+    tx: watch::Sender<Option<LoopFrame>>,
+    repaint: egui::Context,
+    requests: mpsc::Receiver<KeyframeRequest>,
+) {
     let PipelineConfig {
         width,
         height,
@@ -107,7 +142,7 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
             )
         })();
         match result {
-            Ok(capturer) => run_captured(capturer, config, tx, repaint).await,
+            Ok(capturer) => run_captured(capturer, config, tx, repaint, requests).await,
             Err(e) => eprintln!("rdx: DXGI initialization failed: {e}"),
         }
         return;
@@ -126,7 +161,7 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
                 )
             });
         match result {
-            Ok(capturer) => run_captured(capturer, config, tx, repaint).await,
+            Ok(capturer) => run_captured(capturer, config, tx, repaint, requests).await,
             Err(e) => eprintln!("rdx: ScreenCaptureKit initialization failed: {e}"),
         }
         return;
@@ -137,7 +172,7 @@ async fn run(config: PipelineConfig, tx: watch::Sender<Option<LoopFrame>>, repai
         framerate,
         *ORIGIN.get_or_init(Instant::now),
     );
-    run_captured(capturer, config, tx, repaint).await;
+    run_captured(capturer, config, tx, repaint, requests).await;
 }
 
 async fn run_captured(
@@ -145,9 +180,11 @@ async fn run_captured(
     config: PipelineConfig,
     tx: watch::Sender<Option<LoopFrame>>,
     repaint: egui::Context,
+    mut requests: mpsc::Receiver<KeyframeRequest>,
 ) {
     let (mut width, mut height) = (capturer.info().width, capturer.info().height);
     let PipelineConfig {
+        stream_id,
         framerate,
         bitrate_kbps,
         ..
@@ -229,6 +266,7 @@ async fn run_captured(
                 return;
             }
         };
+        apply_keyframe_requests(&mut encoder, stream_id, &mut requests);
         let t_encode_start = now_us();
         let Ok(packets) = encoder.encode(&captured).await else {
             eprintln!("rdx: encode failed, dropping frame");
@@ -279,7 +317,33 @@ async fn run_captured(
     }
 }
 
-async fn recover_capture(
+pub(crate) fn apply_keyframe_requests(
+    encoder: &mut impl rd_codec::Encoder,
+    stream_id: u8,
+    requests: &mut mpsc::Receiver<KeyframeRequest>,
+) -> Option<u64> {
+    let after_frame_id = take_keyframe_request(stream_id, requests)?;
+    encoder.request_keyframe();
+    Some(after_frame_id)
+}
+
+// Each pipeline owns one stream; discard requests for other streams.
+fn take_keyframe_request(
+    stream_id: u8,
+    requests: &mut mpsc::Receiver<KeyframeRequest>,
+) -> Option<u64> {
+    let mut latest = None;
+    while let Ok(request) = requests.try_recv() {
+        if request.stream_id == u32::from(stream_id) {
+            latest = Some(latest.map_or(request.after_frame_id, |id: u64| {
+                id.max(request.after_frame_id)
+            }));
+        }
+    }
+    latest
+}
+
+pub(crate) async fn recover_capture(
     capturer: &mut impl rd_capture::Capturer,
     tx: &watch::Sender<Option<LoopFrame>>,
 ) -> bool {
@@ -379,5 +443,74 @@ mod recovery_tests {
         .unwrap();
         assert!(!result);
         assert_eq!(capture.attempts, 0);
+    }
+}
+
+#[cfg(test)]
+mod keyframe_request_tests {
+    use super::*;
+    use bytes::Bytes;
+    use rd_capture::{CapturedFrame, PixelFormat};
+
+    #[tokio::test]
+    async fn keeps_latest_request_for_selected_stream() {
+        let (tx, mut rx) = mpsc::channel(8);
+        tx.send(KeyframeRequest {
+            stream_id: 2,
+            after_frame_id: 10,
+        })
+        .await
+        .unwrap();
+        tx.send(KeyframeRequest {
+            stream_id: 1,
+            after_frame_id: 50,
+        })
+        .await
+        .unwrap();
+        tx.send(KeyframeRequest {
+            stream_id: 2,
+            after_frame_id: 12,
+        })
+        .await
+        .unwrap();
+        assert_eq!(take_keyframe_request(2, &mut rx), Some(12));
+        assert_eq!(take_keyframe_request(1, &mut rx), None);
+    }
+
+    #[tokio::test]
+    async fn pipeline_request_forces_next_encoded_access_unit_to_idr() {
+        let config = EncoderConfig {
+            codec: CodecId::H264,
+            bitrate_kbps: 800,
+            framerate: 30,
+            keyframe_interval: 1000,
+        };
+        let mut encoder = OpenH264Encoder::new(config).unwrap();
+        let frame = CapturedFrame {
+            width: 128,
+            height: 96,
+            format: PixelFormat::I420,
+            data: Bytes::from(vec![128; 128 * 96 * 3 / 2]),
+            damage: Vec::new(),
+            timestamp_us: 0,
+        };
+        let first = encoder.encode(&frame).await.unwrap().remove(0);
+        assert!(first.keyframe);
+        let mut next_frame = frame.clone();
+        next_frame.timestamp_us = 33_333;
+        let next = encoder.encode(&next_frame).await.unwrap().remove(0);
+        assert!(!next.keyframe);
+
+        let (tx, mut rx) = mpsc::channel(4);
+        tx.send(KeyframeRequest {
+            stream_id: 1,
+            after_frame_id: 42,
+        })
+        .await
+        .unwrap();
+        apply_keyframe_requests(&mut encoder, 1, &mut rx);
+        next_frame.timestamp_us = 66_666;
+        let recovered = encoder.encode(&next_frame).await.unwrap().remove(0);
+        assert!(recovered.keyframe);
     }
 }
