@@ -1,6 +1,7 @@
 # RDX 实施计划
 
-- 状态：执行中（P1 macOS 侧收尾完成、Windows/Linux 待验收；P2 spike 已出结论）
+- 状态：执行中（按用户 2026-10-15 指示暂缓 P1 剩余验收，继续 P2；P1 不视为通过）
+- Windows 真屏 roundtrip 同屏 release 动态复测完成：20.01 秒解码 526 帧、26.29fps，捕获到解码 p50/p95=21.87/52.17ms（不含 GPU/呈现）。修复 OpenH264 码率控制跳帧发送空 packet 导致解码错误的问题，新增实际跳帧回归测试。动态图案本身仅 20.93 次更新/s，尚不满足稳定 1080p30 素材要求，P1 仍待性能与完整 GUI 上屏验收。见 docs/p1-windows-roundtrip-2026-10-15.md。
 - P2 首周 spike 已完成（2026-10-15）：str0m 0.24（纯 Rust crypto，feature `webrtc` 门控）接入 rd-transport，同步 Rtc+socket 归专用线程、与 tokio 只走 channel 的桥接模式经本机双实例真实 ICE+DTLS+SCTP DataChannel 双向交换验证（4 项测试通过，clippy/wasm 核心边界复验通过）。P2 正式接入待办：Frame 分片/重组规格、平台 crypto 后端评估、会话状态机联动、跨机联调。详见 docs/p2-str0m-spike-2026-10-15.md。
 - P1 macOS 侧验收数据收尾（2026-10-15）：端到端 4 轮受控采样 p50 63.4–66.8ms（100% 配对，按 ADR-0007 口径余量 ~19%）；CPU 预算定为全进程 ≤0.5 逻辑核均值，实测 0.28–0.29 核达标；真屏轮 RSS ≈953MB 与历史样本差异悬殊，登记为内存预算核查项。Windows 实机回归无可达主机（SSH 清单仅无桌面 Ubuntu），Linux X11 未接入——P1 整体验收仍开放。
 - 延迟预算口径已定（ADR-0007，2026-10-14 代拟可推翻）：v1 以“捕获到上屏（内容观测法）p50<80ms”为 P1 退出标准，工程内控“捕获→GPU 完成 p95<50ms”（release 现测 41.3/46.2ms 达标）；呈现侧优化登记为 v1 后项。依据：内容归因端到端 release 66.8ms p50（531/531 配对），瓶颈在合成/呈现链（≈58ms）而非软编软解（8.75ms）。详见 docs/adr/0007 与 docs/p1-macos-2026-10-14.md。

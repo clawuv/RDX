@@ -1,4 +1,6 @@
-//! DXGI Desktop Duplication CPU baseline; no cursor composition or dirty-region optimization.
+//! DXGI Desktop Duplication CPU baseline with pointer composition.
+#[path = "dxgi_pointer.rs"]
+mod pointer;
 use crate::{CaptureError, CaptureInfo, CapturedFrame, Capturer, PixelFormat};
 use std::time::Instant;
 use windows::{
@@ -18,6 +20,9 @@ pub struct Display {
     pub adapter: u32,
     pub output: u32,
     pub name: String,
+    /// Origin in physical desktop pixels; may be negative on secondary outputs.
+    pub desktop_x: i32,
+    pub desktop_y: i32,
     pub width: u32,
     pub height: u32,
 }
@@ -58,6 +63,8 @@ pub fn displays() -> Result<Vec<Display>, CaptureError> {
                     adapter: ai,
                     output: oi,
                     name: String::from_utf16_lossy(&d.DeviceName[..end]),
+                    desktop_x: d.DesktopCoordinates.left,
+                    desktop_y: d.DesktopCoordinates.top,
                     width: (d.DesktopCoordinates.right - d.DesktopCoordinates.left) as u32,
                     height: (d.DesktopCoordinates.bottom - d.DesktopCoordinates.top) as u32,
                 });
@@ -67,6 +74,7 @@ pub fn displays() -> Result<Vec<Display>, CaptureError> {
     }
 }
 pub struct DxgiCapturer {
+    pointer: pointer::Pointer,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
@@ -163,6 +171,7 @@ impl DxgiCapturer {
                 ));
             }
             Ok(Self {
+                pointer: pointer::Pointer::default(),
                 device,
                 context,
                 duplication,
@@ -195,6 +204,37 @@ impl DxgiCapturer {
                 })?;
             // Release acquired frames on all Result paths, including mapping failures.
             let result = (|| {
+                if frame_info.LastMouseUpdateTime != 0 {
+                    self.pointer.visible = frame_info.PointerPosition.Visible.as_bool();
+                    self.pointer.position = (
+                        frame_info.PointerPosition.Position.x,
+                        frame_info.PointerPosition.Position.y,
+                    );
+                }
+                if frame_info.PointerShapeBufferSize > 0 {
+                    if frame_info.PointerShapeBufferSize > 4 * 1024 * 1024 {
+                        return Err(CaptureError::Unavailable(
+                            "cursor shape exceeds 4MiB".into(),
+                        ));
+                    }
+                    let mut bytes = vec![0; frame_info.PointerShapeBufferSize as usize];
+                    let mut required = 0;
+                    let mut shape = DXGI_OUTDUPL_POINTER_SHAPE_INFO::default();
+                    self.duplication
+                        .GetFramePointerShape(
+                            frame_info.PointerShapeBufferSize,
+                            bytes.as_mut_ptr().cast(),
+                            &mut required,
+                            &mut shape,
+                        )
+                        .map_err(error)?;
+                    if required as usize > bytes.len() {
+                        return Err(CaptureError::Unavailable("cursor size changed".into()));
+                    }
+                    bytes.truncate(required as usize);
+                    self.pointer.bytes = bytes;
+                    self.pointer.shape = shape;
+                }
                 // Acquisition time, not the compositor's LastPresentTime.
                 let timestamp = self.origin.elapsed().as_micros() as u64;
                 let texture: ID3D11Texture2D = resource
@@ -255,7 +295,9 @@ impl DxgiCapturer {
                     )
                 })();
                 self.context.Unmap(staging, 0);
-                result
+                let mut frame = result?;
+                self.pointer.composite(&mut frame)?;
+                Ok(frame)
             })();
             let release = self.duplication.ReleaseFrame().map_err(error);
             match result {
@@ -286,6 +328,8 @@ mod tests {
             adapter: 0,
             output: 0,
             name: "A".into(),
+            desktop_x: 0,
+            desktop_y: 0,
             width: 1920,
             height: 1080,
         };

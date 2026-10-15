@@ -166,11 +166,20 @@ impl Encoder for OpenH264Encoder {
             _ => self.encoder.encode(&split_i420(frame)?),
         }
         .map_err(|e| CodecError::Malformed(e.to_string()))?;
+        // Rate control may deliberately skip a frame. It is not a decodable
+        // access unit; forwarding it makes the decoder report missing data.
+        if matches!(stream.frame_type(), FrameType::Skip) {
+            return Ok(vec![]);
+        }
         let keyframe = matches!(stream.frame_type(), FrameType::IDR | FrameType::I);
+        let data = stream.to_vec();
+        if data.is_empty() {
+            return Ok(vec![]);
+        }
         Ok(vec![EncodedPacket {
             keyframe,
             timestamp_us: frame.timestamp_us,
-            data: Bytes::from(stream.to_vec()),
+            data: Bytes::from(data),
         }])
     }
 }
@@ -270,6 +279,38 @@ mod tests {
         let second = encoder.encode(&test_frame(1)).await.unwrap().remove(0);
         let decoded = decoder.decode(&second).await.unwrap();
         assert!(decoded.data.iter().any(|&b| b > 32));
+    }
+
+    #[tokio::test]
+    async fn rate_control_skips_do_not_reach_decoder() {
+        let mut encoder = OpenH264Encoder::new(EncoderConfig {
+            codec: CodecId::H264,
+            bitrate_kbps: 1,
+            framerate: 30,
+            keyframe_interval: 60,
+        })
+        .unwrap();
+        let mut decoder = OpenH264Decoder::new().unwrap();
+        let mut skipped = 0;
+        let mut decoded_count = 0;
+        for index in 0..90 {
+            let frame = test_frame(index * 71);
+            let packets = encoder.encode(&frame).await.unwrap();
+            if packets.is_empty() {
+                skipped += 1;
+            }
+            for packet in packets {
+                assert!(!packet.data.is_empty());
+                let decoded = decoder.decode(&packet).await.unwrap();
+                assert_eq!(decoded.timestamp_us, frame.timestamp_us);
+                decoded_count += 1;
+            }
+        }
+        assert!(
+            skipped > 0,
+            "fixture must exercise encoder rate-control skips"
+        );
+        assert!(decoded_count > 0);
     }
 
     #[tokio::test]
